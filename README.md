@@ -1,18 +1,13 @@
 # FSC
-Functio-Structural Current (FSC) analysis
+Function-Structure Coupling (FSC)
 
-This script contains all functions needed for the Functio-Structural Current
-(FSC) analysis. FSC can be used to combine functional and structural
-connectivity matrices[1].
-
-Nothing prevents from using FSC on networks beyond neuroscience. For example, path finding can be done by setting voltage source between start/end and resistances according to the network's edge weights. The shortest path is found by following max current in FSC. As a bonus, this gives all paths.
+This script contains all functions needed for the FSC analysis[1].
 
 Author: Viljami Sairanen
 
 [1] Sairanen, Viljami. ‘Combining Function and Structure in a Single Macro-Scale Connectivity Model of the Human Brain’. bioRxiv, 6 March 2024. https://doi.org/10.1101/2024.03.03.583186.
 
 # A Python example of usage with the Human Connectome Project from the ENIGMA TOOLBOX.
-You might need to install enigmatoolbox and nilearn first.
 
 ```
 from enigmatoolbox.datasets import load_sc, load_fc
