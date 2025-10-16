@@ -12,14 +12,14 @@ Author: Viljami Sairanen
 ```
 from enigmatoolbox.datasets import load_sc, load_fc
 from nilearn import plotting
-from fsc import fsc
+from function_to_structure_coupler import FSC
 
 # Load cortico-cortical functional connectivity data
 fc_ctx, fc_ctx_labels, _, _ = load_fc() 
 # Load cortico-cortical structural connectivity data
 sc_ctx, sc_ctx_labels, _, _ = load_sc() 
 # Calculate cortico-cortical 'functio-structural current' connectivity data
-fscc_ctx = fsc(V=fc_ctx, R=sc_ctx).get_I()
+fscc_ctx = FSC(V=fc_ctx, R=sc_ctx).get_nodal_currents_I()
 
 # Plot cortico-cortical connectivity matrices
 fc_plot = plotting.plot_matrix(fc_ctx, figure=(9, 9), labels=fc_ctx_labels, vmax=0.8, vmin=0, cmap='Reds')
