@@ -5,7 +5,7 @@ This script contains all functions needed for the FSC analysis[1].
 
 Author: Viljami Sairanen
 
-[1] Sairanen, Viljami. ‘Combining Function and Structure in a Single Macro-Scale Connectivity Model of the Human Brain’. bioRxiv, 6 March 2024. https://doi.org/10.1101/2024.03.03.583186.
+[1] Sairanen, Viljami. ‘Nodal analysis of the human brain networks - a new way to couple function and structure’. bioRxiv 2024.03.03.583186. https://doi.org/10.1101/2024.03.03.583186.
 
 # A Python example of usage with the Human Connectome Project from the ENIGMA TOOLBOX.
 
