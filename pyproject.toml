@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fscpy"
+version = "0.1.0"
+description = "Function to Structure Coupling (FSC)"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+  { name = "Viljami Sairanen" }
+]
+license = { file = "LICENSE" }
+
+dependencies = [
+  "numpy",
+  "scipy"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
