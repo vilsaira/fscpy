@@ -1,293 +1,301 @@
 #! /usr/bin/env python
 # -*- coding: utf-8 -*-
-"""
-The FSC class contains methods needed for the Function-to-Structure Coupler
-(FSC). FSC can be used to combine functional and structural
-connectivity matrices[1] obtained from different imaging modalities.
-
-Author: Viljami Sairanen
-
-[1] Sairanen, Viljami. ‘From nodes to pathways: an edge-centric model of brain structure-function coupling via constrained Laplacians’. https://doi.org/10.1101/2024.03.03.583186.
-
-Example of usage with the Human Connectome Project from the ENIGMA TOOLBOX.
-
-from enigmatoolbox.datasets import load_sc, load_fc
-from nilearn import plotting
-from fsc import FSC
-
-# Load cortico-cortical functional connectivity data
-fc_ctx, fc_ctx_labels, _, _ = load_fc() 
-# Load cortico-cortical structural connectivity data
-sc_ctx, sc_ctx_labels, _, _ = load_sc() 
-# Calculate cortico-cortical 'function-structural current' connectivity data
-fscc_ctx = FSC(V=fc_ctx, R=sc_ctx).get_nodal_currents_I()
-
-#  # Plot cortico-cortical connectivity matrices
-fc_plot = plotting.plot_matrix(fc_ctx, figure=(9, 9), labels=fc_ctx_labels, vmax=0.8, vmin=0, cmap='Reds')
-sc_plot = plotting.plot_matrix(sc_ctx, figure=(9, 9), labels=sc_ctx_labels, vmax=10, vmin=0, cmap='Blues')
-fsc_plot = plotting.plot_matrix(fscc_ctx, figure=(9, 9), labels=sc_ctx_labels, vmax=fscc_ctx.max(), vmin=fscc_ctx.min(), cmap='Greens')
 
 """
+Function-to-Structure Coupling (FSC)
+
+This module implements the constrained-Laplacian / Modified Nodal Analysis
+(MNA) formulation described in the accompanying paper.
+
+Notation follows the paper:
+- FC values define pairwise imposed potential-difference constraints
+- SC is the structural weight matrix (weighted adjacency)
+- L is the graph Laplacian built directly from SC
+- phi are nodal potentials
+- I are edge-level flows/currents, defined as:
+      I_ij = SC_ij * (phi_i - phi_j)
+"""
+
+from __future__ import annotations
 
 import numpy as np
 from scipy.sparse.linalg import minres
 
+
 class FSC:
+    """
+    Function-to-Structure Coupling via constrained Laplacians / MNA.
 
-    def __init__(self, V=None, R=None):
-        if V is None:
-            raise ValueError("Give source voltages V")
-        if R is None:
-            raise ValueError("Give resistances R")
-        
-        self._V = V
-        self._R = R
-        self._U = np.zeros_like(V) # nodal voltage difference matrix
-        self._calculate_U = True # flag if U needs to be calculated on get        
-        self._G = None # Conductance matrix
-        self._B = None # Incidence matrix
-        self._C = None # often B.T
-        self._n = None # number of edges
-        self._m = None # number of voltage sources
-        self._nodal_voltages = None
-        self._source_currents = None # i_s
+    Parameters
+    ----------
+    FC : np.ndarray
+        Symmetric functional connectivity matrix. Nonzero upper-triangular
+        entries are treated as imposed pairwise potential differences.
+    SC : np.ndarray
+        Symmetric structural connectivity matrix interpreted as edge weights
+        (conductances).
 
-        self._update_nodal_voltages_U()
-        # self.get_nodal_currents_I()
-        # self.get_voltage_difference_matrix_U()
-        # self.get_conductance_matrix_G()
-        # self.get_incidence_matrix_B()
-        # self.get_incidence_matrix_C()
-        # self._calculate_conductance_matrix_G(resistance_matrix=None)
-        # self._calculate_incidence_matrix_B()
-        # self.predict_source_voltages(resistance_matrix=None)
+    Notes
+    -----
+    The model solves the block system
 
-    def _validate_symmetry(self, matrix, matrix_name):
-        if (np.abs(matrix - matrix.T).max() > 1e-8):
-            raise ValueError(f"Error in setting {matrix_name}: {matrix_name} is not symmetric along diagonal.")
-        return 0
-    
-    def _validate_dimension(self, A, B, A_name, B_name):
-        if A is not None and B is not None:
-            if (A.shape != B.shape):
-                raise ValueError(f"Error in setting {A_name}: dimensions don't match with {B_name}.")
+        [L  B] [phi]   [  0  ]
+        [C  0] [ i_s] = [s_fc ]
 
-    def get_voltage_difference_matrix_U(self):
-        if self._calculate_U:
-            self._update_nodal_voltages_U()
-            self._calculate_U = False
-        return self._U - self._U.T
-    
-    def get_nodal_currents_I(self):
-        Udiff = self.get_voltage_difference_matrix_U()
-        I = np.divide(Udiff, self._R, out=np.zeros_like(Udiff, dtype=float), where=self._R > 0)
-        np.fill_diagonal(I, 0.0)
-        # I = self.get_voltage_difference_matrix_U() / self._R
-        # np.fill_diagonal(I, 0)
-        # I[np.isnan(I)] = 0.0
-        return I
-    
-    def get_conductance_matrix_G(self):
-        if self._G is None:
-            self._update_nodal_voltages_U()
-        return self._G
-    
-    def get_incidence_matrix_B(self):
-        if self._B is None:
-            self._update_nodal_voltages_U()
-        return self._B
-    
-    def get_incidence_matrix_C(self):
-        if self._C is None:
-            self._update_nodal_voltages_U()
-        return self._C
-    
-    def get_nodal_voltages(self):
-        if self._nodal_voltages is None:
-            self._update_nodal_voltages_U()
-        return self._nodal_voltages
-    
-    def get_streamline_currents(self, streamline_assignments=None, streamline_resistances=None, nodal_voltages=None):
-        # streamline assignments detail the origin and end node of a given tract
-        # streamline resistances detail the edge weight between the origin
-        # and end node of a given tract.
-        # nodal_voltages is an optional input that can replace the object's own
-        # nodal voltage U
-        if streamline_assignments is None:
-            raise ValueError("Give streamline_assignments")
-        if streamline_resistances is None:
-            raise ValueError("Give streamline_resistances")
+    where:
+    - L is the graph Laplacian derived from SC
+    - B is the incidence matrix of imposed FC constraints
+    - C = B.T in the absence of dependent sources
+    - phi are nodal potentials
+    - i_s are auxiliary source currents enforcing the constraints
+    - s_fc imposed pairwise potential differences derived from FC
+    """
 
-        U = self._U
-        if nodal_voltages is not None:
-            U = nodal_voltages
+    def __init__(self, FC: np.ndarray | None = None, SC: np.ndarray | None = None):
+        if FC is None:
+            raise ValueError("Give functional connectivity matrix FC.")
+        if SC is None:
+            raise ValueError("Give structural connectivity matrix SC.")
 
-        streamline_currents = np.zeros_like(streamline_resistances)
-        for i, assignment in enumerate(streamline_assignments):
-            if any(assignment == 0):
-                # No connection between the two nodes
+        self._validate_dimension(FC, SC, "FC", "SC")
+        self._validate_square(FC, "FC")
+        self._validate_square(SC, "SC")
+        self._validate_symmetry(FC, "FC")
+        self._validate_symmetry(SC, "SC")
+
+        self._FC = np.array(FC, dtype=float, copy=True)
+        self._SC = np.array(SC, dtype=float, copy=True)
+
+        self._n_nodes: int = self._SC.shape[0]
+        self._constraint_indices: np.ndarray | None = None
+        self._n_constraints: int | None = None
+
+        self._L: np.ndarray | None = None
+        self._B: np.ndarray | None = None
+        self._C: np.ndarray | None = None
+
+        self._phi: np.ndarray | None = None
+        self._source_currents: np.ndarray | None = None
+        self._voltage_differences: np.ndarray | None = None
+        self._edge_currents: np.ndarray | None = None
+
+        self._solve()
+
+    @staticmethod
+    def _validate_square(matrix: np.ndarray, matrix_name: str) -> None:
+        if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
+            raise ValueError(f"{matrix_name} must be a square 2D matrix.")
+
+    @staticmethod
+    def _validate_symmetry(matrix: np.ndarray, matrix_name: str, atol: float = 1e-8) -> None:
+        if not np.allclose(matrix, matrix.T, atol=atol):
+            raise ValueError(f"{matrix_name} must be symmetric.")
+
+    @staticmethod
+    def _validate_dimension(A: np.ndarray, B: np.ndarray, A_name: str, B_name: str) -> None:
+        if A.shape != B.shape:
+            raise ValueError(f"{A_name} dimensions do not match {B_name}.")
+
+    def _get_constraint_indices(self) -> np.ndarray:
+        """
+        Return upper-triangular indices of nonzero FC constraints.
+
+        Only the upper triangle is used to avoid duplicating symmetric constraints,
+        but both positive and negative FC values are included.
+        """
+        fc_upper = np.triu(self._FC, k=1)
+        return np.argwhere(fc_upper != 0)
+
+    def _build_laplacian(self, sc_matrix: np.ndarray | None = None) -> np.ndarray:
+        """
+        Build graph Laplacian L = D - W directly from structural weights SC.
+        """
+        if sc_matrix is None:
+            sc_matrix = self._SC
+
+        degrees = np.sum(sc_matrix, axis=1)
+        laplacian = np.diag(degrees) - sc_matrix
+        self._L = laplacian
+        return laplacian
+
+    def _build_constraint_incidence_matrix(self, constraint_indices: np.ndarray) -> np.ndarray:
+        """
+        Build incidence matrix B for imposed FC constraints.
+
+        For each constrained pair (i, j), the column has:
+        - +1 at i and -1 at j if FC_ij > 0
+        - -1 at i and +1 at j if FC_ij < 0
+        """
+        n = self._n_nodes
+        m = len(constraint_indices)
+        B = np.zeros((n, m), dtype=float)
+
+        for col, (i, j) in enumerate(constraint_indices):
+            fc_value = self._FC[i, j]
+            sign = np.sign(fc_value)
+            if sign == 0:
                 continue
-            inode = assignment[0].astype(int) - 1 # Note, indexing in MRtrix streamline assignments starts from 1 so shift by one to left.
-            fnode = assignment[1].astype(int) - 1 
-            if streamline_resistances[i] > 0:
-                streamline_currents[i] = U[inode, fnode] / streamline_resistances[i]
-        return streamline_currents
-
-    def _calculate_conductance_matrix_G(self, resistance_matrix=None):
-        # Calculate conductance matrix G from resistance matrix R
-        if resistance_matrix is None:
-            resistance_matrix = self._R
-        n = resistance_matrix.shape[0]
-        G = np.zeros((n,n)) # Conductance matrix G: 
-        # G_ii is the sum of all conductances connected to node i
-        # G_ij is the negative of the sum of all conductances connected from i to j
-        for i in range(n):
-            for j in range(n):
-                if resistance_matrix[i,j] > 0:
-                    G[i,i] += 1 / resistance_matrix[i,j]
-                    G[i,j] -= 1 / resistance_matrix[i,j]
-        self._G = G
-        return G
-
-    def _calculate_incidence_matrix_B(self, voltage_source_indices):
-        
-        n = self._n # nodes
-        m = self._m # voltage sources
-        B = np.zeros((n,m))
-        # If the positive/negative terminal of the i-th voltage source is connected to node j, then the element (i,j) in the B matrix is 1 / -1.
-        for i, inds in enumerate(voltage_source_indices):
-            volt = self._V[inds[0], inds[1]]
-            if volt != 0:
-                B[inds[0], i] = np.sign(volt)
-                B[inds[1], i] = -np.sign(volt)
+            B[i, col] = sign
+            B[j, col] = -sign
 
         self._B = B
+        self._C = B.T
         return B
-    
-    def _calculate_nodal_voltages_and_source_currents(self, A, z):
-        # Set the first node as the ground and remove corresponding elements from A and z
-        A1 = A[1:,1:]
-        z1 = z[1:]
-        #return scipy.linalg.lstsq(A1, z1)[0] # nodal voltage and source current
-        #vector
-        # return linalg.solve(A1 + 1e-12 * np.eye(A1.shape[0]), z1, assume_a='sym') # nodal voltage and source current vector
-        return minres(A1, z1)[0]
 
-    def _update_nodal_voltages_U(self):
-        # Modified Nodal Analysis for the given V and R matrices
-        # returns nodal voltages U
-        voltage_source_indices = np.argwhere(self._V > 0)
-        # voltage_source_indices = np.argwhere(np.triu(np.ones_like(self._V),k=1))
-        m = len(voltage_source_indices)
-        n = self._R.shape[0] # number of nodes or vertices
-        self._m = m
-        self._n = n
-        
-        G = self._calculate_conductance_matrix_G()
-        B = self._calculate_incidence_matrix_B(voltage_source_indices)
-        C = B.T # If and only if there exist no dependent sources! In our analogy such are not present and C is the transpose of B.
-        self._C = C
-        D = np.zeros((m,m)) # If and only if there exist no dependent sources!
+    def _solve_mna_system(self, A: np.ndarray, z: np.ndarray) -> np.ndarray:
+        """
+        Solve the grounded MNA system.
 
-        # A = [[G, B], [C, D]]
-        A = np.block([[G, B], [C, D]])
+        The first node is grounded (phi_0 = 0) by removing the first row and
+        column of the full block system.
+        """
+        A_grounded = A[1:, 1:]
+        z_grounded = z[1:]
 
-        z = np.zeros((n+m,)) # There are no current sources thus sum of entering/leaving currents in each node must be zero so the first n elements of z are zero
-        for i in range(m):
-            volt = self._V[voltage_source_indices[i][0], voltage_source_indices[i][1]]
-            z[i+n] = volt
+        solution, info = minres(A_grounded, z_grounded)
+        if info != 0:
+            raise RuntimeError(f"MINRES did not converge successfully (info={info}).")
 
-        u_i = self._calculate_nodal_voltages_and_source_currents(A, z)
+        return solution
 
-        # Calculate voltage differences. The first node has voltage of 0 as it is ground.
-        nodal_voltages = np.zeros((1,))
-        nodal_voltages = np.concatenate((nodal_voltages, u_i[0:n-1]), axis=0)
-        for i in range(n-1):
-            for j in range(i+1, n):
-                if self._R[i,j] > 0:
-                    self._U[i,j] = np.abs(nodal_voltages[j] - nodal_voltages[i])
+    def _solve(self) -> None:
+        """
+        Assemble and solve the constrained-Laplacian / MNA system.
+        """
+        constraint_indices = self._get_constraint_indices()
+        self._constraint_indices = constraint_indices
+        self._n_constraints = len(constraint_indices)
 
-        self._nodal_voltages = nodal_voltages
-        self._source_currents = u_i[n-1:] # -1 due to grounding done by removing the first element
-        
-        # Nodal voltages have been updated successfully
-        self._calculate_U = False
-        
-        return 1
-    
-    @property
-    def _V(self):
-        return self.__V
-    
-    @_V.setter
-    def _V(self, value):
-        self.__V = np.triu(value)
+        L = self._build_laplacian()
+        B = self._build_constraint_incidence_matrix(constraint_indices)
+        C = self._C
+        D = np.zeros((self._n_constraints, self._n_constraints), dtype=float)
 
-    @property
-    def _R(self):
-        return self.__R
-    
-    @_R.setter
-    def _R(self, value):
-        # self._validate_symmetry(value, "R")
-        self._validate_dimension(value, self._V, "R", "V")
-        self.__R = value
+        A = np.block([[L, B], [C, D]])
 
-    @property
-    def _U(self):
-        return self.__U
-    
-    @_U.setter
-    def _U(self, value):
-        self.__U = value
+        s_fc = np.array([self._FC[i, j] for i, j in constraint_indices], dtype=float)
+        z = np.zeros(self._n_nodes + self._n_constraints, dtype=float)
+        z[self._n_nodes :] = s_fc
 
-    @property
-    def _B(self):
-        return self.__B
-    
-    @_B.setter
-    def _B(self, value):
-        self.__B = value
+        solution = self._solve_mna_system(A, z)
 
-    @property
-    def _C(self):
-        return self.__C
-    
-    @_C.setter
-    def _C(self, value):
-        self.__C = value
+        phi = np.zeros(self._n_nodes, dtype=float)
+        phi[1:] = solution[: self._n_nodes - 1]
 
-    @property
-    def _G(self):
-        return self.__G
-    
-    @_G.setter
-    def _G(self, value):
-        self.__G = value
+        self._phi = phi
+        self._source_currents = solution[self._n_nodes - 1 :]
 
-    @property
-    def _m(self):
-        return self.__m
-    
-    @_m.setter
-    def _m(self, value):
-        self.__m = value
+        self._voltage_differences = phi[:, None] - phi[None, :]
+        self._edge_currents = self._SC * self._voltage_differences
+        np.fill_diagonal(self._edge_currents, 0.0)
 
-    @property
-    def _n(self):
-        return self.__n
-    
-    @_n.setter
-    def _n(self, value):
-        self.__n = value
+    def get_nodal_potentials(self) -> np.ndarray:
+        """
+        Return nodal potentials phi.
+        """
+        if self._phi is None:
+            raise RuntimeError("Model has not been solved yet.")        
+        return self._phi.copy()
 
-    @property
-    def _nodal_voltages(self):
-        return self.__nodal_voltages
-    
-    @_nodal_voltages.setter
-    def _nodal_voltages(self, value):
-        self.__nodal_voltages = value
+    def get_voltage_difference_matrix(self) -> np.ndarray:
+        """
+        Return signed nodal voltage-difference matrix:
+            phi_i - phi_j
+        """
+        if self._voltage_differences is None:
+            raise RuntimeError("Model has not been solved yet.")
+        return self._voltage_differences.copy()
+
+    def get_edge_currents(self) -> np.ndarray:
+        """
+        Return edge-level current / flow matrix:
+            I_ij = SC_ij * (phi_i - phi_j)
+        """
+        if self._edge_currents is None:
+            raise RuntimeError("Model has not been solved yet.")
+        return self._edge_currents.copy()
+
+    def get_graph_laplacian(self) -> np.ndarray:
+        """
+        Return graph Laplacian L = D - SC.
+        """
+        if self._L is None:
+            raise RuntimeError("Model has not been solved yet.")
+        return self._L.copy()
+
+    def get_constraint_incidence_matrix(self) -> np.ndarray:
+        """
+        Return incidence matrix B for FC constraints.
+        """
+        if self._B is None:
+            raise RuntimeError("Model has not been solved yet.")
+        return self._B.copy()
+
+    def get_source_currents(self) -> np.ndarray:
+        """
+        Return auxiliary MNA source currents i_s.
+        """
+        if self._source_currents is None:
+            raise RuntimeError("Model has not been solved yet.")
+        return self._source_currents.copy()
+
+    def get_streamline_currents(
+        self,
+        streamline_assignments: np.ndarray | None = None,
+        streamline_weights: np.ndarray | None = None,
+        nodal_potentials: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """
+        Compute streamline-wise currents from node assignments.
+
+        Parameters
+        ----------
+        streamline_assignments : np.ndarray
+            Array of shape (n_streamlines, 2), where each row contains the
+            1-based node indices assigned by MRtrix.
+        streamline_weights : np.ndarray
+            Structural weights for each streamline. If streamlines inherit the
+            parent edge weight uniformly, pass that here.
+        nodal_potentials : np.ndarray, optional
+            Custom nodal potentials to use instead of the solved phi.
+
+        Returns
+        -------
+        np.ndarray
+            Signed streamline-wise currents.
+        """
+        if streamline_assignments is None:
+            raise ValueError("Give streamline_assignments.")
+        if streamline_weights is None:
+            raise ValueError("Give streamline_weights.")
+
+        if nodal_potentials is None:
+            if self._phi is None:
+                raise RuntimeError("Model has not been solved yet.")
+            phi = self._phi
+        else:
+            phi = np.asarray(nodal_potentials, dtype=float)
+
+        if len(streamline_assignments) != len(streamline_weights):
+            raise ValueError("streamline_assignments and streamline_weights must have the same length.")
+
+        streamline_currents = np.zeros(len(streamline_weights), dtype=float)
+
+        for idx, assignment in enumerate(streamline_assignments):
+            if np.any(assignment == 0):
+                continue
+
+            inode = int(assignment[0]) - 1
+            jnode = int(assignment[1]) - 1
+            weight = float(streamline_weights[idx])
+
+            if weight <= 0:
+                continue
+
+            streamline_currents[idx] = weight * (phi[inode] - phi[jnode])
+
+        return streamline_currents
+
 
 if __name__ == "__main__":
     print("No main functions implemented. Use as a class.")
