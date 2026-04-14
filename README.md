@@ -79,9 +79,6 @@ Main methods:
 - `get_graph_laplacian()`  
   → Structural graph Laplacian
 
-- `get_streamline_currents()`  
-  → Streamline-wise currents (for tractography applications)
-
 ---
 
 ## Examples
