@@ -24,7 +24,7 @@ from fsc import FSC
 
 ## Overview
 
-FSC formulates structure–function coupling as a constrained network problem:
+FSC formulates function-structure coupling as a constrained network problem:
 
 - Functional connectivity (FC) defines **pairwise constraints** (imposed potential differences)
 - Structural connectivity (SC) defines the **network topology and weights**
@@ -122,7 +122,7 @@ pip install enigmatoolbox nilearn
 
 FSC can be used for:
 
-- Studying structure–function coupling in brain networks  
+- Studying function-structure coupling in brain networks  
 - Identifying structural pathways supporting functional connectivity  
 - Network flow analysis on connectomes  
 - Tractography filtering and visualization  
@@ -132,7 +132,7 @@ FSC can be used for:
 ## Reference
 
 Sairanen, Viljami.  
-**From nodes to pathways: an edge-centric model of brain structure-function coupling via constrained Laplacians**  
+**From nodes to pathways: an edge-centric model of brain function-structure coupling via constrained Laplacians**  
 https://doi.org/10.1101/2024.03.03.583186
 
 ---
