@@ -7,21 +7,19 @@ connectivity matrices[1] obtained from different imaging modalities.
 
 Author: Viljami Sairanen
 
-[1] Viljami Sairanen, Combining function and structure in a single macro-scale
-connectivity model of the human brain, bioarxiv
-
+[1] Sairanen, Viljami. ‘From nodes to pathways: an edge-centric model of brain structure-function coupling via constrained Laplacians’. https://doi.org/10.1101/2024.03.03.583186.
 
 Example of usage with the Human Connectome Project from the ENIGMA TOOLBOX.
 
 from enigmatoolbox.datasets import load_sc, load_fc
 from nilearn import plotting
-from function_to_structure_coupler import FSC
+from fsc import FSC
 
 # Load cortico-cortical functional connectivity data
 fc_ctx, fc_ctx_labels, _, _ = load_fc() 
 # Load cortico-cortical structural connectivity data
 sc_ctx, sc_ctx_labels, _, _ = load_sc() 
-# Calculate cortico-cortical 'functio-structural current' connectivity data
+# Calculate cortico-cortical 'function-structural current' connectivity data
 fscc_ctx = FSC(V=fc_ctx, R=sc_ctx).get_nodal_currents_I()
 
 #  # Plot cortico-cortical connectivity matrices
@@ -32,10 +30,9 @@ fsc_plot = plotting.plot_matrix(fscc_ctx, figure=(9, 9), labels=sc_ctx_labels, v
 """
 
 import numpy as np
-import scipy
-import sys
+from scipy.sparse.linalg import minres
 
-class FSC(object):
+class FSC:
 
     def __init__(self, V=None, R=None):
         if V is None:
@@ -65,15 +62,15 @@ class FSC(object):
         # self._calculate_incidence_matrix_B()
         # self.predict_source_voltages(resistance_matrix=None)
 
-    def _validateSymmetry(self, matrix, matrix_name):
+    def _validate_symmetry(self, matrix, matrix_name):
         if (np.abs(matrix - matrix.T).max() > 1e-8):
-            sys.exit(f"Error in setting {matrix_name}: {matrix_name} is not symmetric along diagonal.")
+            raise ValueError(f"Error in setting {matrix_name}: {matrix_name} is not symmetric along diagonal.")
         return 0
     
-    def _validateDimension(self, A, B, A_name, B_name):
-        if (A is not None) & (B is not None):
+    def _validate_dimension(self, A, B, A_name, B_name):
+        if A is not None and B is not None:
             if (A.shape != B.shape):
-                sys.exit(f"Error in setting {A_name}: dimensions don't match with {B_name}.")
+                raise ValueError(f"Error in setting {A_name}: dimensions don't match with {B_name}.")
 
     def get_voltage_difference_matrix_U(self):
         if self._calculate_U:
@@ -82,9 +79,12 @@ class FSC(object):
         return self._U - self._U.T
     
     def get_nodal_currents_I(self):
-        I = self.get_voltage_difference_matrix_U() / self._R
-        np.fill_diagonal(I, 0)
-        I[np.isnan(I)] = 0.0
+        Udiff = self.get_voltage_difference_matrix_U()
+        I = np.divide(Udiff, self._R, out=np.zeros_like(Udiff, dtype=float), where=self._R > 0)
+        np.fill_diagonal(I, 0.0)
+        # I = self.get_voltage_difference_matrix_U() / self._R
+        # np.fill_diagonal(I, 0)
+        # I[np.isnan(I)] = 0.0
         return I
     
     def get_conductance_matrix_G(self):
@@ -113,6 +113,11 @@ class FSC(object):
         # and end node of a given tract.
         # nodal_voltages is an optional input that can replace the object's own
         # nodal voltage U
+        if streamline_assignments is None:
+            raise ValueError("Give streamline_assignments")
+        if streamline_resistances is None:
+            raise ValueError("Give streamline_resistances")
+
         U = self._U
         if nodal_voltages is not None:
             U = nodal_voltages
@@ -124,7 +129,8 @@ class FSC(object):
                 continue
             inode = assignment[0].astype(int) - 1 # Note, indexing in MRtrix streamline assignments starts from 1 so shift by one to left.
             fnode = assignment[1].astype(int) - 1 
-            streamline_currents[i] = U[inode, fnode] / streamline_resistances[i]
+            if streamline_resistances[i] > 0:
+                streamline_currents[i] = U[inode, fnode] / streamline_resistances[i]
         return streamline_currents
 
     def _calculate_conductance_matrix_G(self, resistance_matrix=None):
@@ -165,7 +171,7 @@ class FSC(object):
         #return scipy.linalg.lstsq(A1, z1)[0] # nodal voltage and source current
         #vector
         # return linalg.solve(A1 + 1e-12 * np.eye(A1.shape[0]), z1, assume_a='sym') # nodal voltage and source current vector
-        return scipy.sparse.linalg.minres(A1, z1)[0]
+        return minres(A1, z1)[0]
 
     def _update_nodal_voltages_U(self):
         # Modified Nodal Analysis for the given V and R matrices
@@ -223,8 +229,8 @@ class FSC(object):
     
     @_R.setter
     def _R(self, value):
-        # self._validateSymmetry(value, "R")
-        self._validateDimension(value, self._V, "R", "V")
+        # self._validate_symmetry(value, "R")
+        self._validate_dimension(value, self._V, "R", "V")
         self.__R = value
 
     @property
@@ -247,7 +253,7 @@ class FSC(object):
     def _C(self):
         return self.__C
     
-    @_B.setter
+    @_C.setter
     def _C(self, value):
         self.__C = value
 

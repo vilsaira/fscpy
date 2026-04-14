@@ -15,7 +15,7 @@ license = { file = "LICENSE" }
 
 dependencies = [
   "numpy",
-  "scipy"
+  "scipy>=1.8"
 ]
 
 [tool.setuptools.packages.find]

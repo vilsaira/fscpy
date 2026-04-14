@@ -5,14 +5,14 @@ This script contains all functions needed for the FSC analysis[1].
 
 Author: Viljami Sairanen
 
-[1] Sairanen, Viljami. ‘Nodal analysis of the human brain networks - a new way to couple function and structure’. bioRxiv 2024.03.03.583186. https://doi.org/10.1101/2024.03.03.583186.
+[1] Sairanen, Viljami. ‘From nodes to pathways: an edge-centric model of brain structure-function coupling via constrained Laplacians’. https://doi.org/10.1101/2024.03.03.583186.
 
 # A Python example of usage with the Human Connectome Project from the ENIGMA TOOLBOX.
 
 ```
 from enigmatoolbox.datasets import load_sc, load_fc
 from nilearn import plotting
-from function_to_structure_coupler import FSC
+from fsc import FSC
 
 # Load cortico-cortical functional connectivity data
 fc_ctx, fc_ctx_labels, _, _ = load_fc() 
