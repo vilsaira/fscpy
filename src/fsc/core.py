@@ -239,63 +239,6 @@ class FSC:
             raise RuntimeError("Model has not been solved yet.")
         return self._source_currents.copy()
 
-    def get_streamline_currents(
-        self,
-        streamline_assignments: np.ndarray | None = None,
-        streamline_weights: np.ndarray | None = None,
-        nodal_potentials: np.ndarray | None = None,
-    ) -> np.ndarray:
-        """
-        Compute streamline-wise currents from node assignments.
-
-        Parameters
-        ----------
-        streamline_assignments : np.ndarray
-            Array of shape (n_streamlines, 2), where each row contains the
-            1-based node indices assigned by MRtrix.
-        streamline_weights : np.ndarray
-            Structural weights for each streamline. If streamlines inherit the
-            parent edge weight uniformly, pass that here.
-        nodal_potentials : np.ndarray, optional
-            Custom nodal potentials to use instead of the solved phi.
-
-        Returns
-        -------
-        np.ndarray
-            Signed streamline-wise currents.
-        """
-        if streamline_assignments is None:
-            raise ValueError("Give streamline_assignments.")
-        if streamline_weights is None:
-            raise ValueError("Give streamline_weights.")
-
-        if nodal_potentials is None:
-            if self._phi is None:
-                raise RuntimeError("Model has not been solved yet.")
-            phi = self._phi
-        else:
-            phi = np.asarray(nodal_potentials, dtype=float)
-
-        if len(streamline_assignments) != len(streamline_weights):
-            raise ValueError("streamline_assignments and streamline_weights must have the same length.")
-
-        streamline_currents = np.zeros(len(streamline_weights), dtype=float)
-
-        for idx, assignment in enumerate(streamline_assignments):
-            if np.any(assignment == 0):
-                continue
-
-            inode = int(assignment[0]) - 1
-            jnode = int(assignment[1]) - 1
-            weight = float(streamline_weights[idx])
-
-            if weight <= 0:
-                continue
-
-            streamline_currents[idx] = weight * (phi[inode] - phi[jnode])
-
-        return streamline_currents
-
 
 if __name__ == "__main__":
     print("No main functions implemented. Use as a class.")
