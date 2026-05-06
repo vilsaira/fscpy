@@ -128,9 +128,7 @@ FSC can be used for:
 
 ## Reference
 
-Sairanen, Viljami.  
-**From nodes to pathways: an edge-centric model of brain function-structure coupling via constrained Laplacians**  
-[https://doi.org/10.1101/2024.03.03.583186](https://www.biorxiv.org/content/10.1101/2024.03.03.583186v6)
+Viljami Sairanen; From nodes to pathways: an edge-centric model of brain function-structure coupling via constrained Laplacians. Network Neuroscience 2026; doi: https://doi.org/10.1162/NETN.a.589
 
 ---
 
