@@ -4,6 +4,8 @@ FSC is a Python implementation of the **Function–Structure Coupling** model, a
 
 The method links **functional connectivity (FC)** and **structural connectivity (SC)** by solving a network flow model that explains functional interactions through structural pathways.
 
+![](FSC_example_2.png)
+
 ---
 
 ## Installation
