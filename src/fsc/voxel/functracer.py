@@ -121,6 +121,9 @@ class FunCTracer:
     def from_images(cls, fod_img: nib.Nifti1Image, roi_label_img: nib.Nifti1Image,
                     fc_matrix: np.ndarray, roi_labels: Iterable[int] | None = None,
                     wm_mask=None, exclusion_mask=None, fod_norm_threshold=0.25,
+                    endpoint_combination="geometric", orientation_gate="excess",
+                    orientation_floor=1.0, support_power=1.0,
+                    length_power=1.0, min_conductance=1e-12,
                     interface_conductance: float | str = "median", interface_scale=1.0,
                     normalize_total_interface_conductance=True,
                     dilation_iterations=1, constraint_mode: ConstraintMode = "fsc",
@@ -130,7 +133,11 @@ class FunCTracer:
         label_data = resample_labels_to_reference(roi_label_img, fod_img)
         graph = build_fod_graph(
             fod_img=fod_img, wm_mask=wm_mask, exclusion_mask=exclusion_mask,
-            fod_norm_threshold=fod_norm_threshold, verbose=verbose,
+            fod_norm_threshold=fod_norm_threshold,
+            endpoint_combination=endpoint_combination,
+            orientation_gate=orientation_gate, orientation_floor=orientation_floor,
+            support_power=support_power, length_power=length_power,
+            min_conductance=min_conductance, verbose=verbose,
         )
         interface = build_roi_supernode_interface(
             graph=graph, label_data=label_data, roi_labels=roi_labels,

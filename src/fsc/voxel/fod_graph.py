@@ -25,6 +25,10 @@ class FODGraph:
     affine: np.ndarray
     fod_norm: np.ndarray
     fod_norm_threshold: float
+    endpoint_combination: str = "geometric"
+    length_power: float = 1.0
+    orientation_gate: str = "excess"
+    orientation_floor: float = 1.0
 
     @property
     def spatial_shape(self) -> tuple[int, int, int]:
@@ -79,7 +83,13 @@ def voxel_offsets_to_world_directions(offsets_vox, affine):
 def build_fod_kernel_matrix(ncoeff: int, offset_dirs, sphere_name="repulsion724",
                             sh_basis="tournier07", legacy=True,
                             kappa=8.0, power=2.0):
-    """Build angular-kernel matrix M mapping SH coefficients to edge supports."""
+    """Build an antipodal angular-kernel matrix mapping SH coefficients to support.
+
+    The kernel uses ``abs(dot(u, v))`` because diffusion FODs are axial: support
+    along ``u`` and ``-u`` should be equivalent for standard even-order SH FODs.
+    Bidirectionality is enforced later by evaluating both endpoint voxels and
+    combining those endpoint supports with a bottleneck-like rule.
+    """
     from dipy.data import get_sphere
     from dipy.reconst.shm import sh_to_sf_matrix
 
@@ -125,25 +135,140 @@ def _offset_slices(shape, offset):
     return tuple(src), tuple(dst)
 
 
+def _combine_endpoint_supports(supp_i, supp_j, rule="geometric", eps=1e-15):
+    """Combine two endpoint supports into one interface support value.
+
+    The default is the bidirectional interface rule
+
+        sqrt(s_i * s_j)
+
+    so an edge receives high support only when both adjacent voxels support the
+    edge direction. Arithmetic mean is retained only for sensitivity/backwards
+    comparisons and should not be used as the default scientific model.
+    """
+    s_i = np.maximum(np.asarray(supp_i, dtype=float), 0.0)
+    s_j = np.maximum(np.asarray(supp_j, dtype=float), 0.0)
+    rule = str(rule).lower()
+
+    if rule in {"geometric", "geom", "sqrt_product", "bidirectional"}:
+        return np.sqrt(s_i * s_j)
+    if rule in {"harmonic", "harm"}:
+        return (2.0 * s_i * s_j) / (s_i + s_j + float(eps))
+    if rule in {"minimum", "min"}:
+        return np.minimum(s_i, s_j)
+    if rule == "product":
+        return s_i * s_j
+    if rule in {"arithmetic", "mean", "legacy"}:
+        return 0.5 * (s_i + s_j)
+
+    raise ValueError(
+        "endpoint_combination must be one of 'geometric', 'harmonic', "
+        "'minimum', 'product', or 'arithmetic'."
+    )
+
+
+def _apply_orientation_gate(raw_support, coeff, isotropic_kernel=None,
+                            orientation_gate="excess", orientation_floor=1.0,
+                            eps=1e-15):
+    """Suppress support that is merely isotropic rather than directionally oriented.
+
+    ``raw_support`` is the non-negative FOD amplitude sampled along the candidate
+    edge direction. With the default ``orientation_gate='excess'``, the support
+    used for graph conductance is the directional excess over the voxel's
+    isotropic FOD component:
+
+        s_oriented(u) = max(F^+(u) - orientation_floor * mean(F), 0).
+
+    Therefore a perfectly isotropic FOD gives zero support in every direction,
+    even if its absolute FOD amplitude is positive. This prevents current from
+    crossing voxel interfaces solely because both endpoints have flat isotropic
+    FODs.
+
+    Set ``orientation_gate='none'`` to recover the raw directional-amplitude
+    behaviour, or use ``orientation_gate='contrast'`` for a normalized gate that
+    preserves the raw amplitude but suppresses directions near the isotropic
+    baseline.
+    """
+    raw = np.maximum(np.asarray(raw_support, dtype=float), 0.0)
+    gate = str(orientation_gate).lower()
+
+    if gate in {"none", "raw", "amplitude"}:
+        return raw
+
+    if isotropic_kernel is None:
+        raise ValueError("isotropic_kernel is required when orientation_gate is not 'none'.")
+
+    coeff = np.asarray(coeff)
+    iso = np.maximum(coeff @ np.asarray(isotropic_kernel, dtype=float), 0.0)
+    floor = float(orientation_floor) * iso
+
+    if gate in {"excess", "directional_excess", "anisotropic_excess"}:
+        return np.maximum(raw - floor, 0.0)
+
+    if gate in {"contrast", "relative", "normalized"}:
+        contrast = np.maximum(raw - floor, 0.0) / (raw + float(eps))
+        return raw * contrast
+
+    raise ValueError("orientation_gate must be 'excess', 'contrast', or 'none'.")
+
+
 def build_fod_conductance_edges(fod, work_mask, node_id, offsets_vox, offset_dist, M,
-                                support_power=1.0, min_conductance=1e-12,
-                                chunk_size=250_000, dtype=np.float32,
-                                verbose=False):
-    """Build FOD-derived conductance edges for a 26-neighbour voxel graph."""
+                                M_reverse=None, isotropic_kernel=None,
+                                endpoint_combination="geometric",
+                                orientation_gate="excess", orientation_floor=1.0,
+                                support_power=1.0, length_power=1.0,
+                                min_conductance=1e-12, chunk_size=250_000,
+                                dtype=np.float32, verbose=False):
+    """Build bidirectional FOD-interface conductance edges.
+
+    For each candidate edge i--j with unit direction u_ij, support is evaluated
+    at both endpoints:
+
+        s_i = F_i^+( u_ij)
+        s_j = F_j^+(-u_ij)
+
+    Raw directional support is converted to oriented support by subtracting the
+    isotropic FOD component by default:
+
+        s_i = max(F_i^+(u_ij) - mean(F_i), 0)
+        s_j = max(F_j^+(-u_ij) - mean(F_j), 0).
+
+    Thus flat/isotropic FODs do not conduct current across voxel interfaces. The
+    default conductance is then
+
+        c_ij = sqrt(s_i * s_j) / ell_ij.
+
+    ``M`` maps SH coefficients to support along ``u_ij`` for each offset.
+    ``M_reverse`` maps SH coefficients to support along ``-u_ij``. For standard
+    antipodally symmetric diffusion FODs these matrices are usually identical,
+    but keeping both names makes the interface logic explicit and allows future
+    directional orientation fields. ``isotropic_kernel`` maps SH coefficients to
+    the voxelwise spherical mean FOD amplitude used by the orientation gate.
+    """
     fod = np.asarray(fod)
     work_mask = np.asarray(work_mask, dtype=bool)
     node_id = np.asarray(node_id, dtype=np.int64)
     M = np.asarray(M, dtype=np.float64)
+    M_reverse = M if M_reverse is None else np.asarray(M_reverse, dtype=np.float64)
+    isotropic_kernel = None if isotropic_kernel is None else np.asarray(isotropic_kernel, dtype=np.float64)
 
     if fod.ndim != 4:
         raise ValueError("fod must be a 4D SH image array.")
     if fod.shape[:3] != work_mask.shape or node_id.shape != work_mask.shape:
         raise ValueError("FOD, work_mask and node_id shapes do not match.")
-    if M.shape[1] != fod.shape[3]:
-        raise ValueError("M coefficient count does not match FOD coefficient count.")
+    if M.shape[1] != fod.shape[3] or M_reverse.shape[1] != fod.shape[3]:
+        raise ValueError("M/M_reverse coefficient count does not match FOD coefficient count.")
+    if isotropic_kernel is not None and isotropic_kernel.shape != (fod.shape[3],):
+        raise ValueError("isotropic_kernel must have one entry per FOD coefficient.")
+    if M.shape[0] != len(offsets_vox) or M_reverse.shape[0] != len(offsets_vox):
+        raise ValueError("M/M_reverse must have one row per voxel offset.")
 
     edge_i_list, edge_j_list, g_list, edge_k_list = [], [], [], []
     spatial_shape = fod.shape[:3]
+    support_power = float(support_power)
+    length_power = float(length_power)
+    if length_power < 0:
+        raise ValueError("length_power must be non-negative.")
 
     for k, offset in enumerate(np.asarray(offsets_vox, dtype=np.int32)):
         src_sl, dst_sl = _offset_slices(spatial_shape, offset)
@@ -167,10 +292,23 @@ def build_fod_conductance_edges(fod, work_mask, node_id, offsets_vox, offset_dis
             coeff_i = src_fod[local_idx]
             coeff_j = dst_fod[local_idx]
 
-            supp_i = np.maximum(coeff_i @ M[k, :], 0.0)
-            supp_j = np.maximum(coeff_j @ M[k, :], 0.0)
-            support = 0.5 * (supp_i + supp_j)
-            g = (support ** float(support_power)) / float(offset_dist[k])
+            # Bidirectional interface support:
+            # source voxel supports the edge direction +u_ij;
+            # destination voxel supports the opposite interface direction -u_ij.
+            raw_i = np.maximum(coeff_i @ M[k, :], 0.0)
+            raw_j = np.maximum(coeff_j @ M_reverse[k, :], 0.0)
+            supp_i = _apply_orientation_gate(
+                raw_i, coeff_i, isotropic_kernel=isotropic_kernel,
+                orientation_gate=orientation_gate, orientation_floor=orientation_floor,
+            )
+            supp_j = _apply_orientation_gate(
+                raw_j, coeff_j, isotropic_kernel=isotropic_kernel,
+                orientation_gate=orientation_gate, orientation_floor=orientation_floor,
+            )
+            support = _combine_endpoint_supports(
+                supp_i, supp_j, rule=endpoint_combination
+            )
+            g = (support ** support_power) / (float(offset_dist[k]) ** length_power)
             keep = np.isfinite(g) & (g > min_conductance) & (ids_i >= 0) & (ids_j >= 0) & (ids_i != ids_j)
             if not np.any(keep):
                 continue
@@ -193,7 +331,9 @@ def build_fod_conductance_edges(fod, work_mask, node_id, offsets_vox, offset_dis
 def build_fod_graph(fod_img: nib.Nifti1Image, wm_mask=None, exclusion_mask=None,
                     fod_norm_threshold=0.25, sphere_name="repulsion724",
                     sh_basis="tournier07", legacy=True, kappa=8.0,
-                    kernel_power=2.0, support_power=1.0,
+                    kernel_power=2.0, endpoint_combination="geometric",
+                    orientation_gate="excess", orientation_floor=1.0,
+                    support_power=1.0, length_power=1.0,
                     min_conductance=1e-12, chunk_size=250_000,
                     verbose=False) -> FODGraph:
     """Build a voxelwise FOD conductance graph from a 4D FOD SH image."""
@@ -224,14 +364,22 @@ def build_fod_graph(fod_img: nib.Nifti1Image, wm_mask=None, exclusion_mask=None,
 
     offsets_vox = make_13_undirected_offsets()
     _, offset_dist, offset_dirs = voxel_offsets_to_world_directions(offsets_vox, fod_img.affine)
-    M, _, _, _ = build_fod_kernel_matrix(
+    M, B, _, _ = build_fod_kernel_matrix(
         ncoeff=fod.shape[3], offset_dirs=offset_dirs, sphere_name=sphere_name,
         sh_basis=sh_basis, legacy=legacy, kappa=kappa, power=kernel_power,
     )
+    # Approximate spherical mean operator. Subtracting this from directional
+    # support prevents flat/isotropic FODs from becoming conductive in every
+    # neighbour direction.
+    isotropic_kernel = np.asarray(B, dtype=np.float64).mean(axis=0)
     edge_i, edge_j, conductance, edge_k = build_fod_conductance_edges(
         fod=fod, work_mask=work_mask, node_id=node_id,
         offsets_vox=offsets_vox, offset_dist=offset_dist, M=M,
-        support_power=support_power, min_conductance=min_conductance,
+        M_reverse=M, isotropic_kernel=isotropic_kernel,
+        endpoint_combination=endpoint_combination,
+        orientation_gate=orientation_gate, orientation_floor=orientation_floor,
+        support_power=support_power, length_power=length_power,
+        min_conductance=min_conductance,
         chunk_size=chunk_size, verbose=verbose,
     )
 
@@ -241,4 +389,6 @@ def build_fod_graph(fod_img: nib.Nifti1Image, wm_mask=None, exclusion_mask=None,
         edge_k=edge_k, offsets_vox=offsets_vox, offset_dist=offset_dist,
         affine=np.asarray(fod_img.affine, dtype=float), fod_norm=fod_norm,
         fod_norm_threshold=float(fod_norm_threshold),
+        endpoint_combination=str(endpoint_combination), length_power=float(length_power),
+        orientation_gate=str(orientation_gate), orientation_floor=float(orientation_floor),
     )
