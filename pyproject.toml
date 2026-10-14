@@ -1,22 +1,27 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "fscpy"
-version = "1.0.1"
-description = "Function to Structure Coupling (FSC)"
+version = "2.0.0"
+description = "Function-structure coupling on parcellation and FOD-derived voxel graphs"
 readme = "README.md"
-requires-python = ">=3.9"
-authors = [
-  { name = "Viljami Sairanen" }
-]
-license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{name = "Viljami Sairanen"}]
+license = {file = "LICENSE"}
+dependencies = ["numpy>=1.24", "scipy>=1.12"]
 
-dependencies = [
-  "numpy",
-  "scipy>=1.8"
-]
+[project.optional-dependencies]
+voxel = ["nibabel>=5.2", "dipy>=1.10"]
+paths = ["networkx>=3.2"]
+test = ["pytest>=8"]
+
+[project.urls]
+Repository = "https://github.com/vilsaira/fscpy"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
