@@ -14,7 +14,6 @@ dependencies = ["numpy>=1.24", "scipy>=1.12"]
 
 [project.optional-dependencies]
 voxel = ["nibabel>=5.2", "dipy>=1.10"]
-paths = ["networkx>=3.2"]
 test = ["pytest>=8"]
 
 [project.urls]
