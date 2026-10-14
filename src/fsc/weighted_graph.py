@@ -1,6 +1,4 @@
-"""Weighted, undirected graphs shared by the FSC workflows.
-REFACTORED
-"""
+"""Weighted, undirected graphs shared by the FSC workflows."""
 
 from dataclasses import dataclass
 

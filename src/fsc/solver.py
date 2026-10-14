@@ -1,6 +1,4 @@
-"""Function-structure coupling using modified nodal analysis.
-
-REFACTORED"""
+"""Function-structure coupling using modified nodal analysis."""
 
 from dataclasses import dataclass
 

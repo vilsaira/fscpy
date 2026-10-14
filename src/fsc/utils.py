@@ -1,5 +1,4 @@
-"""Utility functions for FSC.
-REFACTORED"""
+"""Utility functions for FSC."""
 import numpy as np
 
 def validate_symmetric_matrix(matrix, name):

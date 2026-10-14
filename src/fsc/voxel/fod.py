@@ -1,6 +1,4 @@
-"""Construct a weighted voxel graph from spherical-harmonic FOD coefficients.
-
-REFACTORED"""
+"""Construct a weighted voxel graph from spherical-harmonic FOD coefficients."""
 
 from dataclasses import dataclass
 

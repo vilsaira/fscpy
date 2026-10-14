@@ -1,6 +1,4 @@
-"""Calculate individual streamline currents from FSC node potentials. Additionally, construct structural connectivity matrix from streamline assignments and resistances.
-
-REFACTORED"""
+"""Calculate individual streamline currents from FSC node potentials. Additionally, construct structural connectivity matrix from streamline assignments and resistances."""
 
 import numpy as np
 

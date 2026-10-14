@@ -1,6 +1,4 @@
-"""Parcellation-level FSC from precalculated SC and FC matrices.
-
-REFACTORED"""
+"""Parcellation-level FSC from precalculated SC and FC matrices."""
 
 import numpy as np
 
