@@ -1,145 +1,72 @@
-# FSC (Function–Structure Coupling)
+# fscpy
 
-FSC is a Python implementation of the **Function–Structure Coupling** model, an edge-centric framework for analyzing brain connectivity using constrained Laplacians.
+Function–structure coupling (FSC) on weighted structural graphs using constrained Laplacians and modified nodal analysis. The package provides two structural representations: regional connectivity matrices and voxelwise fibre-orientation-distribution (FOD) graphs.
 
-The method links **functional connectivity (FC)** and **structural connectivity (SC)** by solving a network flow model that explains functional interactions through structural pathways.
+## Install
 
-![](FSC_example_corrected.png)
-
----
-
-## Installation
-
-Install FSC from PyPI:
+From the repository directory:
 
 ```bash
-pip install fscpy
+python -m pip install -e .             # Regional FSC
+python -m pip install -e '.[voxel]'     # Also install NiBabel and DIPY
 ```
 
-Import in Python:
+## Regional FSC
 
 ```python
-from fsc import FSC
+import numpy as np
+from fsc import solve_parcellation
+
+sc = np.array([[0, 1, 0],
+               [1, 0, 0.5],
+               [0, 0.5, 0]])
+fc = np.array([[0, 0, 1],
+               [0, 0, 0],
+               [1, 0, 0]])
+
+result = solve_parcellation(sc, fc)
+print(result.potentials)
+print(result.edge_currents)
+print(result.relative_residual)
 ```
 
----
+`sc` supplies edge conductances. Nonzero, finite upper-triangle entries of `fc` define potential-difference constraints; their absolute magnitudes are used. Multiple FC constraints are solved jointly, so inspect residuals for consistency.
 
-## Overview
+## Voxelwise FSC
 
-FSC formulates function-structure coupling as a constrained network problem:
-
-- Functional connectivity (FC) defines **pairwise constraints** (imposed potential differences)
-- Structural connectivity (SC) defines the **network topology and weights**
-- The model solves for nodal potentials (φ) and edge-level currents (I)
-
-Mathematically:
-
-```
-I_ij = SC_ij * (φ_i - φ_j)
-```
-
-where:
-- φ = nodal potentials  
-- SC = structural connectivity (weights)  
-- I = edge-level current (flow)
-
----
-
-## Quick Example
+This example assumes a spherical-harmonic FOD image, a registered parcellation, and white-matter/ROI-tissue masks **already in FOD voxel space**. The FC matrix must follow the label order in `roi_labels.npy`.
 
 ```python
-from enigmatoolbox.datasets import load_sc, load_fc
-from fsc import FSC
+import nibabel as nib
+import numpy as np
+from fsc.voxel import (
+    graph_from_fod,
+    labels_in_fod_space,
+    add_roi_nodes,
+    sum_pairwise_support,
+)
 
-# Load connectivity matrices
-fc_ctx, _, _, _ = load_fc()
-sc_ctx, _, _, _ = load_sc()
+fod_image = nib.load('fod_sh.nii.gz')
+parcellation_image = nib.load('parcellation.nii.gz')
+wm_mask = nib.load('wm_mask_fod_space.nii.gz').get_fdata() > 0
+tissue_mask = nib.load('roi_tissue_mask_fod_space.nii.gz').get_fdata() > 0
 
-# Run FSC model
-fsc = FSC(FC=fc_ctx, SC=sc_ctx)
+fc = np.load('fc.npy')
+roi_labels = np.load('roi_labels.npy')
 
-# Get outputs
-phi = fsc.get_nodal_potentials()
-edge_currents = fsc.get_edge_currents()
+wm_graph, voxel_mapping = graph_from_fod(fod_image, wm_mask=wm_mask)
+labels = labels_in_fod_space(parcellation_image, fod_image)
+
+graph, parcellation = add_roi_nodes(
+    wm_graph, voxel_mapping, fod_image, labels,
+    roi_labels=roi_labels, tissue_mask=tissue_mask,
+)
+
+# Solve each nonzero FC pair independently; sum absolute WM edge currents.
+support = sum_pairwise_support(graph, voxel_mapping, parcellation, fc)
+nib.save(nib.Nifti1Image(support, fod_image.affine), 'support.nii.gz')
 ```
 
----
+Only ROI surface voxels with FOD-supported white-matter contacts enter the augmented graph. Active terminals of a parcel share an imposed potential; this does not add structural edges through parcel interiors, but equality constraints can carry source currents. The support volume sums currents on **WM–WM edges only**; ROI contact currents are excluded. For a single selected FC pair, pass `pairs=[(0, 1)]` to `sum_pairwise_support` (zero-based FC indices).
 
-## Outputs
-
-Main methods:
-
-- `get_nodal_potentials()`  
-  → Nodal potentials (φ)
-
-- `get_edge_currents()`  
-  → Edge-level currents (I)
-
-- `get_voltage_difference_matrix()`  
-  → Pairwise potential differences (φ_i − φ_j)
-
-- `get_graph_laplacian()`  
-  → Structural graph Laplacian
-
----
-
-## Examples
-
-See the [`examples/`](examples/) directory for:
-
-- ENIGMA Toolbox example
-- Visualization scripts
-
-Run an example:
-
-```bash
-python examples/enigma_example.py
-```
-
----
-
-## Optional Dependencies
-
-Some examples require additional packages:
-
-```bash
-pip install enigmatoolbox nilearn
-```
-
----
-
-## Notes
-
-- FC is interpreted as **imposed pairwise potential differences**
-- SC is treated as a **weighted adjacency matrix (conductance)**  
-- Only the upper triangle of FC is used to define constraints
-- The model uses **Modified Nodal Analysis (MNA)**
-
----
-
-## Applications
-
-FSC can be used for:
-
-- Studying function-structure coupling in brain networks  
-- Identifying structural pathways supporting functional connectivity  
-- Network flow analysis on connectomes  
-- Tractography filtering and visualization  
-
----
-
-## Reference
-
-Viljami Sairanen; From nodes to pathways: an edge-centric model of brain function-structure coupling via constrained Laplacians. Network Neuroscience 2026; doi: https://doi.org/10.1162/NETN.a.589
-
----
-
-## Author
-
-Viljami Sairanen
-
----
-
-## License
-
-MIT License (see `LICENSE` file)
+The input FOD coefficient ordering must match the DIPY `tournier07` SH basis with `legacy=True` unless you explicitly select matching alternatives. Images must be registered; the resampling helper does not perform registration or SH reorientation.

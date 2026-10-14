@@ -1,19 +1,12 @@
-__version__ = "1.0.1"
+"""Function-structure coupling on weighted structural graphs."""
 
-from .core import FSC
-from .streamlines import (
-    build_sc_from_streamlines,
-    build_support_graph_from_edge_currents,
-    get_pairwise_steiner_streamline_currents,
-    get_streamline_current_magnitudes,
-    get_streamline_currents,
-)
+from .weighted_graph import WeightedGraph
+from .solver import FSCResult, constraints_from_fc, solve_fsc
+from .parcellation import graph_from_sc, solve_parcellation, edge_currents_to_matrix
+from .utils import validate_symmetric_matrix
 
 __all__ = [
-    "FSC",
-    "build_sc_from_streamlines",
-    "build_support_graph_from_edge_currents",
-    "get_pairwise_steiner_streamline_currents",
-    "get_streamline_current_magnitudes",
-    "get_streamline_currents",
+    "WeightedGraph", "FSCResult", "constraints_from_fc",
+    "solve_fsc", "graph_from_sc", "solve_parcellation", "edge_currents_to_matrix",
+    "validate_symmetric_matrix",
 ]
