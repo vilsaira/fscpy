@@ -103,7 +103,10 @@ python examples/enigma_example.py
 Some examples require additional packages:
 
 ```bash
-pip install enigmatoolbox nilearn
+pip install nilearn
+git clone https://github.com/MICA-MNI/ENIGMA.git
+cd ENIGMA
+python setup.py install
 ```
 
 ---
