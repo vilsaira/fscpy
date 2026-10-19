@@ -1,10 +1,22 @@
-"""Function-structure coupling using modified nodal analysis."""
+"""Function-structure coupling through a constrained graph Laplacian."""
 
 from dataclasses import dataclass
+import warnings
 
 import numpy as np
 from scipy import sparse
-from scipy.sparse.linalg import minres
+from scipy.sparse.linalg import MatrixRankWarning, minres, spsolve
+
+
+@dataclass
+class FunctionalConnectivity:
+    """Functional connectivity expressed as potential constraints.
+
+    incidence: Constraint incidence matrix B (n_nodes, n_constraints).
+    constraints: Imposed potential differences s_fc (n_constraints,).
+    """
+    incidence: sparse.csr_matrix
+    constraints: np.ndarray
 
 
 @dataclass
@@ -16,122 +28,167 @@ class FSCResult:
     current_balance: np.ndarray
     relative_residual: float
 
+    def edge_current_matrix(self, structural_graph, absolute=True):
+        """Return structural edge currents as a connectivity matrix.
 
-def constraints_from_fc(fc, node_ids=None):
-    """Return nonzero FC pairs and values from the upper triangle of an FC matrix.
+        Small graphs return a dense array.
+        Large graphs return a sparse matrix.
+        I decided that the N for large is 2000 today.
+        """
+        N_is_large = 2000
+        
+        currents = self.edge_currents
+        if absolute:
+            currents = np.abs(currents)
+        
+        n_nodes = structural_graph.n_nodes
 
-    When node_ids is omitted, pairs contain zero-based indices into the FC
-    matrix. Otherwise, those indices are replaced by graph node IDs.
-    """
+        matrix = sparse.coo_matrix(
+            (currents, (structural_graph.edge_i, structural_graph.edge_j)),
+            shape=(n_nodes, n_nodes)
+        ).tocsr()
+
+        if absolute:
+            matrix += matrix.T
+        else:
+            matrix -= matrix.T
+
+        if len(currents) < N_is_large and n_nodes <= N_is_large:
+            return matrix.toarray()
+
+        return matrix
+
+
+def fc_pairs(fc):
+    """Get finite, nonzero FC pairs from the upper triangle of a square matrix."""
     fc = np.asarray(fc, dtype=float)
     if fc.ndim != 2 or fc.shape[0] != fc.shape[1]:
         raise ValueError("FC must be square.")
-
     if not np.allclose(fc, fc.T, equal_nan=True):
         raise ValueError("FC must be symmetric.")
 
     selected = np.triu(np.isfinite(fc) & (fc != 0), k=1)
     pairs = np.column_stack(np.nonzero(selected))
     values = fc[pairs[:, 0], pairs[:, 1]]
-
-    if node_ids is not None:
-        pairs = np.asarray(node_ids, dtype=int)[pairs]
-
     return pairs, values
 
 
-def solve_fsc(graph, constraints, fc_constraints, *, ground_node=0,
-              rtol=1e-8, maxiter=None):
-    """Solve FSC on an undirected weighted graph.
+def functional_connectivity_from_fc_pairs(pairs, values, n_nodes):
+    """Construct FunctionalConnectivity from functional node pairs."""
+    pairs = np.asarray(pairs, dtype=int).reshape(-1, 2)
+    values = np.asarray(values, dtype=float).reshape(-1)
 
-    Parameters
-    ----------
-    graph : WeightedGraph
-        Structural graph.
-    constraints : ndarray, shape (m, 2), or sparse matrix, shape (n_nodes, m)
-        Either pairs of graph node indices, or a constraint matrix whose
-        columns contain coefficients for linear combinations of node
-        potentials. Each column defines one functional constraint.
-    fc_constraints : array_like, shape (m,)
-        FC values. Their absolute magnitudes are imposed as potential
-        differences or weighted parcel-potential differences.
-    ground_node : int, default=0
-        Graph node whose potential is fixed at zero.
-    rtol : float, default=1e-8
-        Relative convergence tolerance for MINRES.
-    maxiter : int, optional
-        Maximum number of MINRES iterations.
+    if len(pairs) != len(values):
+        raise ValueError("FC pairs and values must have matching lengths.")
+    if np.any(pairs < 0) or np.any(pairs >= n_nodes):
+        raise ValueError("FC pair index outside graph.")
 
-    Returns
-    -------
-    FSCResult
-        Potentials, edge and source currents, and residual diagnostics.
+    n_pairs = len(pairs)
+
+    rows = np.empty(2 * n_pairs, dtype=int)
+    columns = np.empty(2 * n_pairs, dtype=int)
+    coefficients = np.empty(2 * n_pairs, dtype=float)
+
+    rows[0::2] = pairs[:, 0]
+    rows[1::2] = pairs[:, 1]
+
+    columns[0::2] = np.arange(n_pairs)
+    columns[1::2] = np.arange(n_pairs)
+
+    coefficients[0::2] = 1.0
+    coefficients[1::2] = -1.0
+
+    incidence = sparse.csr_matrix(
+        (coefficients, (rows, columns)),
+        shape=(n_nodes, n_pairs)
+    )
+
+    return FunctionalConnectivity(incidence, values)
+
+
+def functional_connectivity_from_fc_matrix(fc):
+    """Construct FunctionalConnectivity from an FC matrix."""
+    pairs, values = fc_pairs(fc)
+
+    return functional_connectivity_from_fc_pairs(pairs, values, len(fc))
+
+
+def solve_fsc(structural_graph, functional_connectivity, *, ground_node=0,
+              solver="auto", rtol=1e-8, maxiter=None):
+    """Solve FSC using modified nodal analysis.
+
+    Solve [L  B; B.T  0] [potential; source_current] = [0; |FC|].
+    ``functional_connectivity`` contains both B and its target values.
+
+    ``solver='auto'`` uses sparse direct solving for small systems and
+    MINRES for larger ones. Inaccurate convergence raises an error.
+    The caller is responsible for providing mutually compatible constraints.
     """
-    n_nodes = graph.n_nodes
-    values = np.abs(np.asarray(fc_constraints, dtype=float).reshape(-1))
-    n_constraints = len(values)
-    if not np.all(np.isfinite(values)):
+    n_nodes = structural_graph.n_nodes
+    incidence = functional_connectivity.incidence.tocsr()
+    constraints = np.abs(np.asarray(functional_connectivity.constraints, dtype=float).reshape(-1))
+    n_constraints = len(constraints)
+
+    if incidence.shape != (n_nodes, n_constraints):
+        raise ValueError("Functional constraint dimensions do not match the graph.")
+    if not np.all(np.isfinite(constraints)):
         raise ValueError("Functional constraint values must be finite.")
-
-    if sparse.issparse(constraints):
-        incidence = constraints.tocsr()
-        if incidence.shape != (n_nodes, n_constraints):
-            raise ValueError("Constraint matrix has incompatible dimensions.")
-    else:
-        pairs = np.asarray(constraints, dtype=int).reshape(-1, 2)
-        if len(pairs) != n_constraints:
-            raise ValueError("Constraint pairs and values must have matching lengths.")
-        if np.any(pairs < 0) or np.any(pairs >= n_nodes):
-            raise ValueError("Constraint node outside graph.")
-
-        rows = np.empty(2 * n_constraints, dtype=int)
-        columns = np.empty(2 * n_constraints, dtype=int)
-        coefficients = np.empty(2 * n_constraints, dtype=float)
-
-        for constraint_id, (source, target) in enumerate(pairs):
-            rows[2 * constraint_id:2 * constraint_id + 2] = (source, target)
-            columns[2 * constraint_id:2 * constraint_id + 2] = constraint_id
-            coefficients[2 * constraint_id:2 * constraint_id + 2] = (1.0, -1.0)
-
-        incidence = sparse.coo_matrix(
-            (coefficients, (rows, columns)), shape=(n_nodes, n_constraints)
-        ).tocsr()
-
     if not 0 <= ground_node < n_nodes:
         raise ValueError("Invalid ground node.")
+    if solver not in ("auto", "direct", "minres"):
+        raise ValueError(f"Unknown solver: {solver}")
 
     if n_constraints == 0:
         return FSCResult(
-            np.zeros(n_nodes), np.zeros(len(graph.edge_i)),
-            np.empty(0), np.empty(0), np.zeros(n_nodes), 0.0
+            np.zeros(n_nodes), np.zeros(len(structural_graph.edge_i)),
+            np.empty(0), np.empty(0), np.zeros(n_nodes), 0.0,
         )
 
-    laplacian = graph.laplacian()
+    laplacian = structural_graph.laplacian()
     matrix = sparse.bmat([[laplacian, incidence], [incidence.T, None]]).tocsr()
-    rhs = np.concatenate((np.zeros(n_nodes), values))
+    rhs = np.concatenate((np.zeros(n_nodes), constraints))
 
     mask = np.ones(n_nodes + n_constraints, dtype=bool)
     mask[ground_node] = False
+    reduced_matrix = matrix[mask][:, mask]
+    reduced_rhs = rhs[mask]
     solution = np.zeros(n_nodes + n_constraints)
-    solution[mask], status = minres(
-        matrix[mask][:, mask], rhs[mask], rtol=rtol, maxiter=maxiter
-    )
-    if status != 0:
-        raise RuntimeError(f"MINRES did not converge (status={status}).")
+
+    if solver == "auto":
+        solver = "direct" if len(reduced_rhs) <= 1000 else "minres"
+
+    if solver == "direct":
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", MatrixRankWarning)
+                solution[mask] = spsolve(reduced_matrix.tocsc(), reduced_rhs)
+        except MatrixRankWarning as exc:
+            raise ValueError("Singular MNA system: check functional constraints.") from exc
+    else:
+        solution[mask], status = minres(
+            reduced_matrix, reduced_rhs, rtol=rtol, maxiter=maxiter
+        )
+        if status != 0:
+            raise RuntimeError(f"MINRES did not converge (status={status}).")
 
     potentials = solution[:n_nodes]
     source_currents = solution[n_nodes:]
-    edge_currents = graph.conductance * (
-        potentials[graph.edge_i] - potentials[graph.edge_j]
+    edge_currents = structural_graph.conductance * (
+        potentials[structural_graph.edge_i] - potentials[structural_graph.edge_j]
     )
-    constraint_residual = incidence.T @ potentials - values
+    constraint_residual = incidence.T @ potentials - constraints
     current_balance = laplacian @ potentials + incidence @ source_currents
 
     residual = np.linalg.norm(np.concatenate((current_balance, constraint_residual)))
-    scale = np.linalg.norm(values)
+    scale = np.linalg.norm(constraints)
     relative_residual = float(residual / scale) if scale else float(residual)
+    if not np.isfinite(relative_residual) or relative_residual > max(10 * rtol, 1e-10):
+        raise RuntimeError(
+            f"{solver} returned an inaccurate FSC solution "
+            f"(relative residual={relative_residual:.3g})."
+        )
 
     return FSCResult(
         potentials, edge_currents, source_currents,
-        constraint_residual, current_balance, relative_residual
+        constraint_residual, current_balance, relative_residual,
     )

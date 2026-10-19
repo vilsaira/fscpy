@@ -253,11 +253,9 @@ def roi_constraints(mapping, pairs, values, n_nodes):
 
     Returns
     -------
-    constraint_matrix : scipy.sparse.csr_matrix
+    functional_constraints : fsc.FunctionalConstraints
         Matrix with one zero-difference constraint for every additional
         terminal of each ROI, followed by the selected FC constraints.
-    targets : ndarray
-        Zero values for equal-potential constraints followed by FC values.
     """
     pairs = np.asarray(pairs, dtype=int).reshape(-1, 2)
     values = np.asarray(values, dtype=float).reshape(-1)
@@ -297,4 +295,4 @@ def roi_constraints(mapping, pairs, values, n_nodes):
         (coefficients, (rows, columns)), shape=(n_nodes, constraint_id)
     ).tocsr()
     targets = np.concatenate((np.zeros(n_equalities), values))
-    return incidence, targets
+    return fsc.FunctionalConstraints(incidence, targets)

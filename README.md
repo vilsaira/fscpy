@@ -15,7 +15,7 @@ python -m pip install -e '.[voxel]'     # Also install NiBabel and DIPY
 
 ```python
 import numpy as np
-from fsc import solve_parcellation
+from fsc import solve_from_parcellations
 
 sc = np.array([[0, 1, 0],
                [1, 0, 0.5],
@@ -24,7 +24,7 @@ fc = np.array([[0, 0, 1],
                [0, 0, 0],
                [1, 0, 0]])
 
-result = solve_parcellation(sc, fc)
+result = solve_from_parcellations(sc, fc)
 print(result.potentials)
 print(result.edge_currents)
 print(result.relative_residual)
