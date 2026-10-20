@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 
 import numpy as np
-from scipy import sparse
 
 import fsc
 from .fod import (
@@ -17,18 +16,12 @@ from .fod import (
 
 @dataclass
 class ParcellationMapping:
-    """Map functional ROI labels to individual active surface voxels.
-
-    roi_labels gives the functional-connectivity matrix order.
-    surface_nodes are separate graph nodes; sharing a label does not
-    create an edge between them.
-    """
+    """Map functional ROIs to graph supernodes and WM interfaces."""
 
     roi_labels: np.ndarray
-    surface_labels: np.ndarray
-    surface_nodes: np.ndarray
-    surface_edge_indices: np.ndarray
+    roi_nodes: np.ndarray
     interface_edge_indices: np.ndarray
+    contact_voxel_indices: np.ndarray
 
 
 def labels_in_fod_space(label_image, fod_image):
@@ -45,12 +38,7 @@ def add_roi_nodes(graph, voxel, fod_image, labels, roi_labels=None, *,
                   legacy=True, kappa=8.0, kernel_power=2.0,
                   orientation_floor=1.0, interface_scale=1.0,
                   min_conductance=1e-12):
-    """Add active ROI surface voxels and FOD-supported contacts to white matter.
-
-    Only ROI voxels sharing a *face* with a white-matter graph voxel and
-    having positive FOD-supported interface conductance become surface nodes.
-    Neighbouring surface nodes belonging to the same ROI are connected only
-    where both FODs support the interface (26-neighbour geometry).
+    """Add one ROI supernode per parcel and connects it to the white-matter graph through FOD-weighted edges.
 
     Parameters
     ----------
@@ -119,180 +107,125 @@ def add_roi_nodes(graph, voxel, fod_image, labels, roi_labels=None, *,
     contact_wm_nodes = []
     contact_conductances = []
 
-    # Face-sharing contacts only: the three unique axial offsets, both ways.
+    
+    # Collect FOD-supported contacts between ROI tissue and WM voxels.
     for direction_id, offset in enumerate(offsets):
         if np.count_nonzero(offset) != 1:
             continue
 
         source_slice, target_slice = _neighbor_pair_slices(offset)
+
         for tissue_slice, wm_slice in (
             (source_slice, target_slice),
             (target_slice, source_slice),
         ):
             contacts = tissue[tissue_slice] & (voxel.node_id[wm_slice] >= 0)
+
             if not np.any(contacts):
                 continue
 
             coefficients = fod[wm_slice][contacts]
             baseline = positive_fod_mean(coefficients, sh_basis)
+
             support = directional_support(
-                coefficients, kernels[direction_id], baseline, orientation_floor
+                coefficients,
+                kernels[direction_id],
+                baseline,
+                orientation_floor,
             )
+
             conductance = interface_scale * support / lengths[direction_id]
             valid = np.isfinite(conductance) & (conductance > min_conductance)
+
             if not np.any(valid):
                 continue
 
-            contact_surface_voxels.append(image_indices[tissue_slice][contacts][valid])
-            contact_wm_nodes.append(voxel.node_id[wm_slice][contacts][valid])
-            contact_conductances.append(conductance[valid].astype(np.float32))
+            contact_surface_voxels.append(
+                image_indices[tissue_slice][contacts][valid]
+            )
+            contact_wm_nodes.append(
+                voxel.node_id[wm_slice][contacts][valid]
+            )
+            contact_conductances.append(
+                conductance[valid].astype(np.float32)
+            )
 
     if not contact_conductances:
-        raise ValueError("No FOD-supported ROI-to-white-matter contacts.")
+        raise ValueError("No FOD-supported ROI-to-WM contacts.")
 
     contact_surface_voxels = np.concatenate(contact_surface_voxels)
     contact_wm_nodes = np.concatenate(contact_wm_nodes)
     contact_conductances = np.concatenate(contact_conductances)
 
-    # One graph node per distinct surface voxel with a supported WM contact.
-    active_voxels, contact_to_surface = np.unique(
-        contact_surface_voxels, return_inverse=True
-    )
-    surface_nodes = graph.n_nodes + np.arange(len(active_voxels))
-    surface_labels = labels.flat[active_voxels]
 
-    missing_rois = np.setdiff1d(roi_labels, surface_labels)
-    if len(missing_rois):
-        raise ValueError(f"No supported white-matter contact for ROIs {missing_rois.tolist()}.")
+    # One graph node per functional ROI.
+    roi_nodes = graph.n_nodes + np.arange(len(roi_labels))
 
-    surface_node_id = np.full(labels.shape, -1, dtype=int)
-    surface_node_id.flat[active_voxels] = surface_nodes
+    # Map each interface voxel to its ROI supernode.
+    contact_labels = labels.flat[contact_surface_voxels]
 
-    # Optional structural flow along the surface follows the same 26-neighbour FOD rule as the white-matter graph.
-    surface_baseline = np.zeros(labels.shape, dtype=np.float32)
-    surface_baseline.flat[active_voxels] = positive_fod_mean(
-        fod.reshape(-1, fod.shape[-1])[active_voxels], sh_basis
+
+    unique_labels, counts = np.unique(
+        contact_labels, return_counts=True
     )
 
-    surface_sources = []
-    surface_targets = []
-    surface_conductances = []
+    print("Requested ROI labels:", roi_labels)
+    print("Contact ROI labels:", unique_labels)
+    print("Contact counts:", counts)
+    print("Total interface edges:", len(contact_surface_voxels))
 
-    for direction_id, offset in enumerate(offsets):
-        source_slice, target_slice = _neighbor_pair_slices(offset)
-        neighbors = (surface_node_id[source_slice] >= 0) & (surface_node_id[target_slice] >= 0)
-        neighbors &= labels[source_slice] == labels[target_slice]
-        if not np.any(neighbors):
-            continue
-
-        source_support = directional_support(
-            fod[source_slice][neighbors], kernels[direction_id],
-            surface_baseline[source_slice][neighbors], orientation_floor
+    for label in roi_labels:
+        print(
+            f"ROI {label}:",
+            f"{np.count_nonzero(labels == label)} anatomical voxels,",
+            f"{np.count_nonzero(contact_labels == label)} interface edges"
         )
-        target_support = directional_support(
-            fod[target_slice][neighbors], kernels[direction_id],
-            surface_baseline[target_slice][neighbors], orientation_floor
-        )
-        conductance = np.sqrt(source_support * target_support) / lengths[direction_id]
-        valid = np.isfinite(conductance) & (conductance > min_conductance)
-        if not np.any(valid):
-            continue
 
-        surface_sources.append(surface_node_id[source_slice][neighbors][valid])
-        surface_targets.append(surface_node_id[target_slice][neighbors][valid])
-        surface_conductances.append(conductance[valid].astype(np.float32))
 
-    if surface_conductances:
-        surface_sources = np.concatenate(surface_sources)
-        surface_targets = np.concatenate(surface_targets)
-        surface_conductances = np.concatenate(surface_conductances)
-    else:
-        surface_sources = np.empty(0, dtype=int)
-        surface_targets = np.empty(0, dtype=int)
-        surface_conductances = np.empty(0, dtype=np.float32)
+    contact_roi_nodes = np.empty(len(contact_labels), dtype=int)
 
-    n_original_edges = len(graph.edge_i)
-    n_surface_edges = len(surface_sources)
+    for index, label in enumerate(roi_labels):
+        selected = contact_labels == label
+        contact_roi_nodes[selected] = roi_nodes[index]
+
+        if not np.any(selected):
+            raise ValueError(f"ROI {label} has no WM contacts.")
+
+    # Append the ROI-WM edges to the existing structural graph.
     augmented_graph = fsc.WeightedGraph(
-        graph.n_nodes + len(surface_nodes),
-        np.concatenate((graph.edge_i, surface_sources, surface_nodes[contact_to_surface])),
-        np.concatenate((graph.edge_j, surface_targets, contact_wm_nodes)),
-        np.concatenate((graph.conductance, surface_conductances, contact_conductances)),
+        n_nodes=graph.n_nodes + len(roi_nodes),
+        edge_i=np.concatenate((graph.edge_i, contact_roi_nodes)),
+        edge_j=np.concatenate((graph.edge_j, contact_wm_nodes)),
+        conductance=np.concatenate((graph.conductance, contact_conductances)),
     )
+
+    n_wm_edges = len(graph.edge_i)
 
     mapping = ParcellationMapping(
         roi_labels=roi_labels,
-        surface_labels=surface_labels,
-        surface_nodes=surface_nodes,
-        surface_edge_indices=np.arange(n_original_edges, n_original_edges + n_surface_edges),
+        roi_nodes=roi_nodes,
         interface_edge_indices=np.arange(
-            n_original_edges + n_surface_edges, len(augmented_graph.edge_i)
+            n_wm_edges, len(augmented_graph.edge_i)
         ),
+        contact_voxel_indices=contact_surface_voxels,
     )
+
     return augmented_graph, mapping
 
 
 def roi_constraints(mapping, pairs, values, n_nodes):
-    """Impose equal potentials on each ROI's active surface terminals.
-
-    For every ROI, its surface terminals are constrained to the potential
-    of its first terminal. For each FC pair, the two reference terminals
-    have the specified potential difference. There are no conductive
-    edges between terminals unless provided by add_roi_nodes().
-
-    Parameters
-    ----------
-    mapping : ParcellationMapping
-        Mapping returned by add_roi_nodes().
-    pairs : ndarray, shape (m, 2)
-        Zero-based indices into mapping.roi_labels / FC matrix order.
-    values : ndarray, shape (m,)
-        Functional correlation values for the selected pairs.
-    n_nodes : int
-        Number of nodes in the augmented graph.
-
-    Returns
-    -------
-    functional_constraints : fsc.FunctionalConnectivity
-        Matrix with one zero-difference constraint for every additional
-        terminal of each ROI, followed by the selected FC constraints.
-    """
+    """Construct functional potential constraints between ROI supernodes."""
     pairs = np.asarray(pairs, dtype=int).reshape(-1, 2)
     values = np.asarray(values, dtype=float).reshape(-1)
+
     if len(pairs) != len(values):
         raise ValueError("FC pairs and values must have the same length.")
+
     if np.any(pairs < 0) or np.any(pairs >= len(mapping.roi_labels)):
         raise ValueError("FC pair index outside the parcellation.")
 
-    rows = []
-    columns = []
-    coefficients = []
-    anchors = np.empty(len(mapping.roi_labels), dtype=int)
-    constraint_id = 0
-
-    for roi_index in np.unique(pairs):
-        label = mapping.roi_labels[roi_index]
-        nodes = mapping.surface_nodes[mapping.surface_labels == label]
-        if len(nodes) == 0:
-            raise ValueError(f"ROI {label} has no surface terminals.")
-        anchors[roi_index] = nodes[0]
-
-        for node in nodes[1:]:
-            rows.extend((node, nodes[0]))
-            columns.extend((constraint_id, constraint_id))
-            coefficients.extend((1.0, -1.0))
-            constraint_id += 1
-
-    n_equalities = constraint_id
-
-    for source_roi, target_roi in pairs:
-        rows.extend((anchors[source_roi], anchors[target_roi]))
-        columns.extend((constraint_id, constraint_id))
-        coefficients.extend((1.0, -1.0))
-        constraint_id += 1
-
-    incidence = sparse.coo_matrix(
-        (coefficients, (rows, columns)), shape=(n_nodes, constraint_id)
-    ).tocsr()
-    targets = np.concatenate((np.zeros(n_equalities), values))
-    return fsc.FunctionalConnectivity(incidence, targets)
+    return fsc.functional_connectivity_from_fc_pairs(
+        mapping.roi_nodes[pairs],
+        values,
+        n_nodes,
+    )

@@ -5,7 +5,7 @@ import warnings
 
 import numpy as np
 from scipy import sparse
-from scipy.sparse.linalg import MatrixRankWarning, minres, spsolve
+from scipy.sparse.linalg import MatrixRankWarning, minres, spsolve, cg, LinearOperator
 from scipy.sparse.csgraph import connected_components
 
 @dataclass
@@ -252,11 +252,18 @@ def _solve_mna(structural_graph, functional_connectivity, prepared, *,
     residual = np.linalg.norm(np.concatenate((current_balance, constraint_residual)))
     scale = np.linalg.norm(constraints)
     relative_residual = float(residual / scale) if scale else float(residual)
+
     if not np.isfinite(relative_residual) or relative_residual > max(10 * rtol, 1e-10):
         raise RuntimeError(
-            f"{solver} returned an inaccurate FSC solution "
-            f"(relative residual={relative_residual:.3g})."
+            f"MNA residual diagnostics:\n"
+            f"  Current balance: {np.linalg.norm(current_balance):.6g}\n"
+            f"  ROI equality constraints: {np.linalg.norm(constraint_residual[:-1]):.6g}\n"
+            f"  FC potential constraint: {constraint_residual[-1]:.6g}\n"
+            f"  Maximum constraint error: {np.max(np.abs(constraint_residual)):.6g}\n"
+            f"  Potential range: {potentials.min():.6g}, {potentials.max():.6g}\n"
+            f"  Relative residual: {relative_residual:.6g}"
         )
+
 
     return FSCResult(
         potentials, edge_currents, source_currents,
@@ -282,14 +289,21 @@ def solve_fsc(structural_graph, functional_connectivity, *, ground_node=0,
 
 def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
                     ground_node=0, solver="auto", rtol=1e-4, maxiter=None):
-    
-    from .voxel.roi import roi_constraints
+    """Compute voxelwise FSC by solving one Laplacian system per FC pair.
 
+    Each anatomical ROI is represented by one graph supernode.
+    A single functional potential constraint is imposed per ROI pair.
+    The corresponding MNA system is solved by eliminating the constraint
+    current, leaving a grounded structural Laplacian system.
+    """
     fc = np.asarray(fc, dtype=float)
     n_rois = len(parcellation.roi_labels)
 
     if fc.shape != (n_rois, n_rois):
         raise ValueError("FC and parcellation dimensions differ.")
+
+    if solver not in ("auto", "cg", "direct"):
+        raise ValueError(f"Unknown voxel solver: {solver}")
 
     if pairs is None:
         pairs, values = fc_pairs(fc)
@@ -306,21 +320,93 @@ def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
     if len(pairs) == 0:
         return edge_currents
 
-    prepared = _prepare_mna(structural_graph, ground_node)
+    # Prepare the structural Laplacian once for all FC pairs.
+    laplacian, components, representatives = _prepare_mna(
+        structural_graph, ground_node
+    )
+
+    ground_nodes = representatives.copy()
+    ground_nodes[components[ground_node]] = ground_node
+
+    mask = np.ones(structural_graph.n_nodes, dtype=bool)
+    mask[ground_nodes] = False
+
+    matrix = laplacian[mask][:, mask].tocsr()
+
+    # Jacobi preconditioner for conjugate gradient.
+    diagonal = matrix.diagonal()
+
+    preconditioner = LinearOperator(
+        matrix.shape,
+        matvec=lambda x: x / diagonal,
+        dtype=float,
+    )
 
     for pair, value in zip(pairs, values):
         if not np.isfinite(value) or value == 0:
             continue
 
-        constraints = roi_constraints(
-            parcellation, [pair], [value], structural_graph.n_nodes
+        source, target = parcellation.roi_nodes[pair]
+
+        # Disconnected ROIs cannot carry structural current.
+        if components[source] != components[target]:
+            continue
+
+        # Unit current between ROI supernodes.
+        rhs = np.zeros(structural_graph.n_nodes)
+        rhs[source] = 1.0
+        rhs[target] = -1.0
+
+        if solver == "direct":
+            solution = spsolve(matrix.tocsc(), rhs[mask])
+        else:
+            solution, status = cg(
+                matrix,
+                rhs[mask],
+                M=preconditioner,
+                rtol=rtol,
+                maxiter=maxiter,
+            )
+
+            if status != 0:
+                raise RuntimeError(
+                    f"CG did not converge for ROI pair {pair} "
+                    f"(status={status})."
+                )
+
+        potentials = np.zeros(structural_graph.n_nodes)
+        potentials[mask] = solution
+
+        # Scale the unit-current solution to the imposed FC voltage.
+        resistance = potentials[source] - potentials[target]
+
+        if not np.isfinite(resistance) or resistance <= 0:
+            raise RuntimeError(
+                f"Invalid effective resistance for ROI pair {pair}."
+            )
+
+        current = abs(value) / resistance
+        potentials *= current
+
+        # Verify the structural current balance.
+        balance = laplacian @ potentials
+        balance[source] -= current
+        balance[target] += current
+
+        relative_residual = np.linalg.norm(balance) / abs(value)
+
+        if not np.isfinite(relative_residual) or relative_residual > max(10 * rtol, 1e-10):
+            raise RuntimeError(
+                f"Inaccurate solution for ROI pair {pair}: "
+                f"relative residual={relative_residual:.3g}"
+            )
+
+        # Accumulate absolute current on every structural edge.
+        currents = structural_graph.conductance * (
+            potentials[structural_graph.edge_i]
+            - potentials[structural_graph.edge_j]
         )
 
-        result = _solve_mna(
-            structural_graph, constraints, prepared,
-            solver=solver, rtol=rtol, maxiter=maxiter,
-        )
-
-        edge_currents += np.abs(result.edge_currents)
+        edge_currents += np.abs(currents)
 
     return edge_currents
