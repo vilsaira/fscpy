@@ -64,9 +64,10 @@ def add_roi_nodes(graph, voxel, fod_image, labels, roi_labels=None, *,
     Returns
     -------
     augmented_graph : WeightedGraph
-        White-matter graph with ROI surface nodes and their FOD-weighted edges.
+        White-matter graph with one supernode per ROI and FOD-weighted
+        ROI-to-white-matter connections.
     mapping : ParcellationMapping
-        Active ROI surface terminals and structural edge indices.
+        ROI supernode identifiers and corresponding interface edges.
     """
     fod = fod_image.get_fdata(dtype=np.float32)
     labels = np.asarray(labels)
@@ -163,24 +164,6 @@ def add_roi_nodes(graph, voxel, fod_image, labels, roi_labels=None, *,
 
     # Map each interface voxel to its ROI supernode.
     contact_labels = labels.flat[contact_surface_voxels]
-
-
-    unique_labels, counts = np.unique(
-        contact_labels, return_counts=True
-    )
-
-    print("Requested ROI labels:", roi_labels)
-    print("Contact ROI labels:", unique_labels)
-    print("Contact counts:", counts)
-    print("Total interface edges:", len(contact_surface_voxels))
-
-    for label in roi_labels:
-        print(
-            f"ROI {label}:",
-            f"{np.count_nonzero(labels == label)} anatomical voxels,",
-            f"{np.count_nonzero(contact_labels == label)} interface edges"
-        )
-
 
     contact_roi_nodes = np.empty(len(contact_labels), dtype=int)
 
