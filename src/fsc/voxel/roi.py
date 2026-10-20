@@ -253,7 +253,7 @@ def roi_constraints(mapping, pairs, values, n_nodes):
 
     Returns
     -------
-    functional_constraints : fsc.FunctionalConstraints
+    functional_constraints : fsc.FunctionalConnectivity
         Matrix with one zero-difference constraint for every additional
         terminal of each ROI, followed by the selected FC constraints.
     """
@@ -295,4 +295,4 @@ def roi_constraints(mapping, pairs, values, n_nodes):
         (coefficients, (rows, columns)), shape=(n_nodes, constraint_id)
     ).tocsr()
     targets = np.concatenate((np.zeros(n_equalities), values))
-    return fsc.FunctionalConstraints(incidence, targets)
+    return fsc.FunctionalConnectivity(incidence, targets)

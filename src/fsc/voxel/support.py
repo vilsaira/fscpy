@@ -2,8 +2,7 @@
 
 import numpy as np
 
-from fsc.solver import fc_pairs, solve_fsc
-from .roi import roi_constraints
+from fsc.solver import solve_fsc_voxel
 
 
 def support_on_nodes(n_nodes, source_nodes, target_nodes, edge_currents):
@@ -25,25 +24,13 @@ def voxel_support(graph, voxel, edge_currents):
     return voxel.to_volume(support)
 
 
-def sum_pairwise_support(graph, voxel, parcellation, fc, pairs=None, **solver_options):
-    """Sum voxel support from independently solved functional ROI pairs."""
-    fc = np.asarray(fc)
-    n_rois = len(parcellation.roi_labels)
-    if fc.shape != (n_rois, n_rois):
-        raise ValueError("FC and parcellation dimensions differ.")
 
-    if pairs is None:
-        pairs, values = fc_pairs(fc)
-    else:
-        pairs = np.asarray(pairs, dtype=int).reshape(-1, 2)
-        values = fc[pairs[:, 0], pairs[:, 1]]
+def sum_pairwise_support(graph, voxel, parcellation, fc, pairs=None,
+                         **solver_options):
+    """Calculate voxel support from independently solved FC pairs."""
+    edge_currents = solve_fsc_voxel(
+        graph, parcellation, fc, pairs=pairs, **solver_options
+    )
 
-    total_support = np.zeros(voxel.node_id.shape)
-    for pair, value in zip(pairs, values):
-        functional_constraints = roi_constraints(
-            parcellation, [pair], [value], graph.n_nodes
-        )
-        result = solve_fsc(graph, functional_constraints, **solver_options)
-        total_support += voxel_support(graph, voxel, result.edge_currents)
+    return voxel_support(graph, voxel, edge_currents)
 
-    return total_support

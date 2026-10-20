@@ -6,7 +6,7 @@ import warnings
 import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import MatrixRankWarning, minres, spsolve
-
+from scipy.sparse.csgraph import connected_components
 
 @dataclass
 class FunctionalConnectivity:
@@ -113,8 +113,70 @@ def functional_connectivity_from_fc_matrix(fc):
     return functional_connectivity_from_fc_pairs(pairs, values, len(fc))
 
 
-def solve_fsc(structural_graph, functional_connectivity, *, ground_node=0,
-              solver="auto", rtol=1e-8, maxiter=None):
+
+def _prepare_mna(structural_graph, ground_node=0):
+    n_nodes = structural_graph.n_nodes
+
+    if not 0 <= ground_node < n_nodes:
+        raise ValueError("Invalid ground node.")
+
+    laplacian = structural_graph.laplacian()
+
+    _, components = connected_components(
+        laplacian, directed=False
+    )
+
+    _, representatives = np.unique(
+        components, return_index=True
+    )
+
+    return laplacian, components, representatives
+
+def _mna_mask(incidence, components, representatives, ground_node):
+    """Ground one node per component joined by structural or FC connections."""
+    n_components = len(representatives)
+
+    if n_components == 1:
+        mask = np.ones(len(components), dtype=bool)
+        mask[ground_node] = False
+        return mask
+
+    # Connect structural components through functional constraints.
+    entries = incidence.tocoo()
+
+    links = sparse.coo_matrix(
+        (
+            np.ones(len(entries.row)),
+            (components[entries.row], entries.col),
+        ),
+        shape=(n_components, incidence.shape[1]),
+    ).tocsr()
+
+    adjacency = sparse.bmat([
+        [None, links],
+        [links.T, None],
+    ], format="csr")
+
+    _, groups = connected_components(adjacency, directed=False)
+    structural_groups = groups[:n_components]
+
+    # Select one ground node per resulting group.
+    _, first = np.unique(structural_groups, return_index=True)
+    ground_nodes = representatives[first].copy()
+
+    # Preserve the requested ground_node in its group.
+    selected_group = structural_groups[components[ground_node]]
+    ground_nodes[structural_groups[first] == selected_group] = ground_node
+
+    mask = np.ones(len(components), dtype=bool)
+    mask[ground_nodes] = False
+
+    return mask
+
+
+
+def _solve_mna(structural_graph, functional_connectivity, prepared, *,
+               ground_node=0, solver="auto", rtol=1e-8, maxiter=None):
     """Solve FSC using modified nodal analysis.
 
     Solve [L  B; B.T  0] [potential; source_current] = [0; |FC|].
@@ -133,8 +195,6 @@ def solve_fsc(structural_graph, functional_connectivity, *, ground_node=0,
         raise ValueError("Functional constraint dimensions do not match the graph.")
     if not np.all(np.isfinite(constraints)):
         raise ValueError("Functional constraint values must be finite.")
-    if not 0 <= ground_node < n_nodes:
-        raise ValueError("Invalid ground node.")
     if solver not in ("auto", "direct", "minres"):
         raise ValueError(f"Unknown solver: {solver}")
 
@@ -144,15 +204,24 @@ def solve_fsc(structural_graph, functional_connectivity, *, ground_node=0,
             np.empty(0), np.empty(0), np.zeros(n_nodes), 0.0,
         )
 
-    laplacian = structural_graph.laplacian()
-    matrix = sparse.bmat([[laplacian, incidence], [incidence.T, None]]).tocsr()
-    rhs = np.concatenate((np.zeros(n_nodes), constraints))
+    laplacian, components, representatives = prepared
 
-    mask = np.ones(n_nodes + n_constraints, dtype=bool)
-    mask[ground_node] = False
-    reduced_matrix = matrix[mask][:, mask]
-    reduced_rhs = rhs[mask]
-    solution = np.zeros(n_nodes + n_constraints)
+    mask = _mna_mask(
+        incidence, components, representatives, ground_node
+    )
+
+    grounded_laplacian = laplacian[mask][:, mask].tocsr()
+
+    reduced_incidence = incidence[mask]
+    n_free = np.count_nonzero(mask)
+
+    reduced_matrix = sparse.bmat([
+        [grounded_laplacian, reduced_incidence],
+        [reduced_incidence.T, None],
+    ]).tocsr()
+
+    reduced_rhs = np.concatenate((np.zeros(n_free), constraints))
+    solution = np.zeros(n_free + n_constraints)
 
     if solver == "auto":
         solver = "direct" if len(reduced_rhs) <= 1000 else "minres"
@@ -161,18 +230,19 @@ def solve_fsc(structural_graph, functional_connectivity, *, ground_node=0,
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("error", MatrixRankWarning)
-                solution[mask] = spsolve(reduced_matrix.tocsc(), reduced_rhs)
+                solution[:] = spsolve(reduced_matrix.tocsc(), reduced_rhs)
         except MatrixRankWarning as exc:
             raise ValueError("Singular MNA system: check functional constraints.") from exc
     else:
-        solution[mask], status = minres(
+        solution[:], status = minres(
             reduced_matrix, reduced_rhs, rtol=rtol, maxiter=maxiter
         )
         if status != 0:
             raise RuntimeError(f"MINRES did not converge (status={status}).")
 
-    potentials = solution[:n_nodes]
-    source_currents = solution[n_nodes:]
+    potentials = np.zeros(n_nodes)
+    potentials[mask] = solution[:n_free]
+    source_currents = solution[n_free:]
     edge_currents = structural_graph.conductance * (
         potentials[structural_graph.edge_i] - potentials[structural_graph.edge_j]
     )
@@ -192,3 +262,65 @@ def solve_fsc(structural_graph, functional_connectivity, *, ground_node=0,
         potentials, edge_currents, source_currents,
         constraint_residual, current_balance, relative_residual,
     )
+
+
+
+def solve_fsc(structural_graph, functional_connectivity, *, ground_node=0,
+              solver="auto", rtol=1e-8, maxiter=None):
+    prepared = _prepare_mna(structural_graph, ground_node)
+    return _solve_mna(
+        structural_graph,
+        functional_connectivity,
+        prepared,
+        solver=solver,
+        rtol=rtol,
+        maxiter=maxiter,
+        ground_node=ground_node,
+    )
+
+
+
+def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
+                    ground_node=0, solver="auto", rtol=1e-4, maxiter=None):
+    
+    from .voxel.roi import roi_constraints
+
+    fc = np.asarray(fc, dtype=float)
+    n_rois = len(parcellation.roi_labels)
+
+    if fc.shape != (n_rois, n_rois):
+        raise ValueError("FC and parcellation dimensions differ.")
+
+    if pairs is None:
+        pairs, values = fc_pairs(fc)
+    else:
+        pairs = np.asarray(pairs, dtype=int).reshape(-1, 2)
+
+        if np.any(pairs < 0) or np.any(pairs >= n_rois):
+            raise ValueError("FC pair index outside parcellation.")
+
+        values = fc[pairs[:, 0], pairs[:, 1]]
+
+    edge_currents = np.zeros(len(structural_graph.edge_i))
+
+    if len(pairs) == 0:
+        return edge_currents
+
+    prepared = _prepare_mna(structural_graph, ground_node)
+
+    for pair, value in zip(pairs, values):
+        if not np.isfinite(value) or value == 0:
+            continue
+
+        constraints = roi_constraints(
+            parcellation, [pair], [value], structural_graph.n_nodes
+        )
+
+        result = _solve_mna(
+            structural_graph, constraints, prepared,
+            solver=solver, rtol=rtol, maxiter=maxiter,
+        )
+
+        edge_currents += np.abs(result.edge_currents)
+
+    return edge_currents
