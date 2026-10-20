@@ -13,8 +13,6 @@ def graph_from_sc(sc):
     source, target = np.nonzero(np.triu(sc, k=1))
     return fsc.WeightedGraph(len(sc), source, target, sc[source, target])
 
-from warnings import warn
-
 def solve_from_parcellations(sc, fc):
     """Calculate FSC support from parcellation SC and FC matrices."""
     graph = graph_from_sc(sc)

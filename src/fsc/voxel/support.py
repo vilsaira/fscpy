@@ -27,7 +27,7 @@ def voxel_support(graph, voxel, edge_currents):
 
 def sum_pairwise_support(graph, voxel, parcellation, fc, pairs=None,
                          **solver_options):
-    """Calculate voxel support from independently solved FC pairs."""
+    """Calculate voxel support by accumulating currents over FC pairs."""
     edge_currents = solve_fsc_voxel(
         graph, parcellation, fc, pairs=pairs, **solver_options
     )

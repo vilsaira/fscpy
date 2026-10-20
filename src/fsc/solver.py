@@ -30,12 +30,7 @@ class FSCResult:
 
     def edge_current_matrix(self, structural_graph, absolute=True):
         """Return structural edge currents as a connectivity matrix.
-
-        Small graphs return a dense array.
-        Large graphs return a sparse matrix.
-        I decided that the N for large is 2000 today.
         """
-        N_is_large = 2000
         
         currents = self.edge_currents
         if absolute:
@@ -53,7 +48,7 @@ class FSCResult:
         else:
             matrix -= matrix.T
 
-        if len(currents) < N_is_large and n_nodes <= N_is_large:
+        if n_nodes <= 2000:
             return matrix.toarray()
 
         return matrix
@@ -257,8 +252,7 @@ def _solve_mna(structural_graph, functional_connectivity, prepared, *,
         raise RuntimeError(
             f"MNA residual diagnostics:\n"
             f"  Current balance: {np.linalg.norm(current_balance):.6g}\n"
-            f"  ROI equality constraints: {np.linalg.norm(constraint_residual[:-1]):.6g}\n"
-            f"  FC potential constraint: {constraint_residual[-1]:.6g}\n"
+            f"  Constraint residual: {np.linalg.norm(constraint_residual):.6g}\n"
             f"  Maximum constraint error: {np.max(np.abs(constraint_residual)):.6g}\n"
             f"  Potential range: {potentials.min():.6g}, {potentials.max():.6g}\n"
             f"  Relative residual: {relative_residual:.6g}"
@@ -269,7 +263,6 @@ def _solve_mna(structural_graph, functional_connectivity, prepared, *,
         potentials, edge_currents, source_currents,
         constraint_residual, current_balance, relative_residual,
     )
-
 
 
 def solve_fsc(structural_graph, functional_connectivity, *, ground_node=0,
@@ -284,8 +277,6 @@ def solve_fsc(structural_graph, functional_connectivity, *, ground_node=0,
         maxiter=maxiter,
         ground_node=ground_node,
     )
-
-
 
 
 def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
