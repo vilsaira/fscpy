@@ -4,8 +4,8 @@
 
 The Python package is imported as `fsc` and provides two workflows:
 
-- **Parcellation FSC:** a structural connectivity (SC) matrix and a functional connectivity (FC) matrix produce a symmetric matrix of structural-edge support. Relevant publication for this version is the Network Neuroscience paper 10.1162/NETN.a.589.
-- **Voxelwise FSC:** a spherical-harmonic fibre orientation distribution (FOD) defines a weighted white-matter voxel graph. One supernode per functional parcel connects to neighbouring white-matter voxels through FOD-supported interfaces. The output is a voxelwise map of white-matter edge support. This version is explained in the Aperture Neuro paper 10.52294/001c.172225.
+- **Parcellation FSC:** a structural connectivity (SC) matrix and a functional connectivity (FC) matrix produce a symmetric matrix of structural-edge support. Relevant publication for this version is the Network Neuroscience paper [doi:10.1162/NETN.a.589](https://doi.org/10.1162/NETN.a.589).
+- **Voxelwise FSC:** a spherical-harmonic fibre orientation distribution (FOD) defines a weighted white-matter voxel graph. One supernode per functional parcel connects to neighbouring white-matter voxels through FOD-supported interfaces. The output is a voxelwise map of white-matter edge support. This version is explained in the Aperture Neuro paper [doi:10.52294/001c.172225](https://doi.org/10.52294/001c.172225).
 
 These workflows use different structural graphs, so their numerical outputs are **not interchangeable**.
 
