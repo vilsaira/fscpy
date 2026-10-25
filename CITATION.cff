@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "Cite the publication corresponding to the FSC workflow used."
 title: "fscpy: Function-structure coupling"
 type: software
-version: 2.0.0
+version: 2.0.1
 authors:
   - family-names: Sairanen
     given-names: Viljami

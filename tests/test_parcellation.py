@@ -27,10 +27,12 @@ def test_five_node_path():
     np.testing.assert_allclose(support, expected, rtol=1e-12, atol=1e-12)
 
 
-def test_absolute_fc_and_empty_fc():
+def test_negative_and_empty_fc():
     sc, fc = five_node_matrices()
-    positive = fsc.solve_from_parcellations(sc, fc)
-    np.testing.assert_allclose(fsc.solve_from_parcellations(sc, -fc), positive)
+    np.testing.assert_array_equal(
+        fsc.solve_from_parcellations(sc, -fc),
+        np.zeros_like(sc),
+    )
     np.testing.assert_array_equal(
         fsc.solve_from_parcellations(sc, np.zeros_like(fc)),
         np.zeros_like(sc),

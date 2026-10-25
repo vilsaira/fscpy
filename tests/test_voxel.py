@@ -39,21 +39,31 @@ def test_single_pair_and_voxel_support():
 
 def test_roi_basis_matches_individual_pairs():
     graph, _, parcels = synthetic_graph()
+
     fc = np.array([
         [0.0, 0.8, -0.4],
         [0.8, 0.0, 0.6],
         [-0.4, 0.6, 0.0],
     ])
+
     combined = fsc.solve_fsc_voxel(graph, parcels, fc, rtol=1e-12)
+
     summed = np.zeros(len(graph.edge_i))
     for pair in [(0, 1), (0, 2), (1, 2)]:
         summed += fsc.solve_fsc_voxel(
             graph, parcels, fc, pairs=[pair], rtol=1e-12
         )
+
     np.testing.assert_allclose(combined, summed, atol=1e-12)
+
+    # Negative correlations must not contribute.
+    positive_fc = np.maximum(fc, 0)
     np.testing.assert_allclose(
-        fsc.solve_fsc_voxel(graph, parcels, -fc, rtol=1e-12), combined
+        combined,
+        fsc.solve_fsc_voxel(graph, parcels, positive_fc, rtol=1e-12),
+        atol=1e-12,
     )
+
     np.testing.assert_array_equal(
         fsc.solve_fsc_voxel(graph, parcels, np.zeros_like(fc)),
         np.zeros(len(graph.edge_i)),

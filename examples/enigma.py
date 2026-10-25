@@ -15,6 +15,8 @@ fc, fc_labels, _, _ = load_fc()
 if sc.shape != fc.shape or not np.array_equal(sc_labels, fc_labels):
     raise ValueError("ENIGMA SC and FC parcellations do not match.")
 
+fc[fc < 0] = 0
+
 support = fsc.solve_from_parcellations(sc, fc)
 
 fig, axes = plt.subplots(1, 3, figsize=(12, 4))
