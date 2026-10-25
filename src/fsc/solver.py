@@ -55,14 +55,14 @@ class FSCResult:
 
 
 def fc_pairs(fc):
-    """Get finite, nonzero FC pairs from the upper triangle of a square matrix."""
+    """Get finite, positive FC pairs from the upper triangle of a square matrix."""
     fc = np.asarray(fc, dtype=float)
     if fc.ndim != 2 or fc.shape[0] != fc.shape[1]:
         raise ValueError("FC must be square.")
     if not np.allclose(fc, fc.T, equal_nan=True):
         raise ValueError("FC must be symmetric.")
 
-    selected = np.triu(np.isfinite(fc) & (fc != 0), k=1)
+    selected = np.triu(np.isfinite(fc) & (fc > 0), k=1)
     pairs = np.column_stack(np.nonzero(selected))
     values = fc[pairs[:, 0], pairs[:, 1]]
     return pairs, values
@@ -77,6 +77,10 @@ def functional_connectivity_from_fc_pairs(pairs, values, n_nodes):
         raise ValueError("FC pairs and values must have matching lengths.")
     if np.any(pairs < 0) or np.any(pairs >= n_nodes):
         raise ValueError("FC pair index outside graph.")
+
+    selected = np.isfinite(values) & (values > 0)
+    pairs = pairs[selected]
+    values = values[selected]
 
     n_pairs = len(pairs)
 
@@ -174,7 +178,7 @@ def _solve_mna(structural_graph, functional_connectivity, prepared, *,
                ground_node=0, solver="auto", rtol=1e-8, maxiter=None):
     """Solve FSC using modified nodal analysis.
 
-    Solve [L  B; B.T  0] [potential; source_current] = [0; |FC|].
+    Solve [L  B; B.T  0] [potential; source_current] = [0; s_FC].
     ``functional_connectivity`` contains both B and its target values.
 
     ``solver='auto'`` uses sparse direct solving for small systems and
@@ -183,7 +187,7 @@ def _solve_mna(structural_graph, functional_connectivity, prepared, *,
     """
     n_nodes = structural_graph.n_nodes
     incidence = functional_connectivity.incidence.tocsr()
-    constraints = np.abs(np.asarray(functional_connectivity.constraints, dtype=float).reshape(-1))
+    constraints = np.asarray(functional_connectivity.constraints, dtype=float).reshape(-1)
     n_constraints = len(constraints)
 
     if incidence.shape != (n_nodes, n_constraints):
@@ -313,7 +317,7 @@ def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
     # Ignore zero, nonfinite and self-connections.
     valid = (
         np.isfinite(values)
-        & (values != 0)
+        & (values > 0)
         & (pairs[:, 0] != pairs[:, 1])
     )
     pairs = pairs[valid]
@@ -412,7 +416,7 @@ def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
                 f"Invalid effective resistance for ROI pair {pair}."
             )
 
-        current = abs(value) / resistance
+        current = value / resistance
         potentials *= current
 
         # Check current conservation at every graph node.
@@ -420,7 +424,7 @@ def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
         balance[source] -= current
         balance[target] += current
 
-        relative_residual = np.linalg.norm(balance) / abs(value)
+        relative_residual = np.linalg.norm(balance) / value
 
         if (
             not np.isfinite(relative_residual)

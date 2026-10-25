@@ -60,7 +60,7 @@ def solve_from_parcellations(sc, fc):
         potentials[mask] = solve(rhs[mask])
 
         resistance = potentials[source] - potentials[target]
-        potentials *= abs(value) / resistance
+        potentials *= value / resistance
 
         currents = graph.conductance * (
             potentials[graph.edge_i] - potentials[graph.edge_j]
