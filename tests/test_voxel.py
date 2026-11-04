@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 import fsc
 from fsc.voxel import ParcellationMapping, VoxelMapping, voxel_support
-
+from pathlib import Path
+import inspect
 
 def synthetic_graph():
     # WM graph: 0 -- 1 -- 2; ROI nodes 3, 4, 5 attach to WM 0, 2, 1.
@@ -144,3 +145,27 @@ def test_convergence_check_is_scale_invariant(conductance):
     np.testing.assert_allclose(
         cg_currents, reference, rtol=1e-2, atol=1e-3 * reference.max()
     )
+
+def test_default_sh_basis_matches_mrtrix3():
+    """Default SH basis must decode MRtrix3 FOD coefficients like sh2amp."""
+    pytest.importorskip("dipy")
+    from fsc.voxel.fod import fod_kernels
+
+    ref = np.load(Path(__file__).parent / "data" / "mrtrix3_sh_reference.npz")
+    coefficients = ref["coefficients"]
+    _, sh_basis = fod_kernels(coefficients.shape[1], np.eye(3))  # defaults, any directions
+
+    predicted = coefficients @ sh_basis[ref["vertex_indices"]].T
+    np.testing.assert_allclose(predicted, ref["amplitudes"], atol=1e-5)
+
+
+def test_sh_basis_defaults_agree():
+    """graph_from_fod and add_roi_nodes must default to the same basis."""
+    from fsc.voxel.fod import fod_kernels, graph_from_fod
+    from fsc.voxel.roi import add_roi_nodes
+
+    def defaults(fn):
+        p = inspect.signature(fn).parameters
+        return (p["sphere"].default, p["basis"].default, p["legacy"].default)
+
+    assert defaults(fod_kernels) == defaults(graph_from_fod) == defaults(add_roi_nodes)
