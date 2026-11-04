@@ -89,7 +89,7 @@ def voxelhood_geometry(affine):
     return offsets, lengths, directions
 
 def fod_kernels(n_coefficients, directions, *, sphere="repulsion724",
-                basis="tournier07", legacy=True, kappa=8., power=2.):
+                basis="tournier07", legacy=False, kappa=8., power=2.):
     """Construct SH kernels for evaluating directional FOD amplitudes.
 
     The directional kernels calculate angularly weighted FOD amplitudes
@@ -106,8 +106,8 @@ def fod_kernels(n_coefficients, directions, *, sphere="repulsion724",
         DIPY sphere used for sampling the FOD.
     basis : str
         SH basis convention used for the input FOD coefficients.
-    legacy : bool
-        Use DIPY's legacy convention for the selected SH basis.
+    legacy : bool, default=False
+        Use DIPY's legacy convention for the selected SH basis. False (default) matches MRtrix3 dwi2fod output. True is the older MRtrix 0.2-style convention.
     kappa : float
         Controls how strongly angular weights favour aligned directions.
     power : float
@@ -297,7 +297,7 @@ def fod_edges(fod, mask, node_id, offsets, lengths, kernels, isotropic_baseline,
 
 def graph_from_fod(image, *, wm_mask=None, exclusion_mask=None,
                    fod_norm_threshold=0.25, sphere="repulsion724",
-                   basis="tournier07", legacy=True, kappa=8.0,
+                   basis="tournier07", legacy=False, kappa=8.0,
                    kernel_power=2.0, orientation_floor=1.0,
                    min_conductance=1e-12):
     """Construct a voxel-wise weighted structural graph from an SH FOD image.
@@ -335,7 +335,7 @@ def graph_from_fod(image, *, wm_mask=None, exclusion_mask=None,
     basis : str, default="tournier07"
         SH basis convention used by the input FOD coefficients.
 
-    legacy : bool, default=True
+    legacy : bool, default=False
         DIPY legacy convention for the selected SH basis.
 
     kappa : float, default=8.0

@@ -35,7 +35,7 @@ def labels_in_fod_space(label_image, fod_image):
 
 def add_roi_nodes(graph, voxel, fod_image, labels, roi_labels=None, *,
                   tissue_mask=None, sphere="repulsion724", basis="tournier07",
-                  legacy=True, kappa=8.0, kernel_power=2.0,
+                  legacy=False, kappa=8.0, kernel_power=2.0,
                   orientation_floor=1.0, interface_scale=1.0,
                   min_conductance=1e-12):
     """Add one ROI supernode per parcel and connects it to the white-matter graph through FOD-weighted edges.
