@@ -326,8 +326,9 @@ def graph_from_fod(image, *, wm_mask=None, exclusion_mask=None,
         of their FOD amplitude or inclusion in wm_mask.
 
     fod_norm_threshold : float, default=0.25
-        Minimum Euclidean norm of the SH coefficient vector required
-        to include a voxel when wm_mask is not provided.
+        Minimum Euclidean norm of the SH coefficient vector for a voxel to
+        be included. Applied in addition to wm_mask. The value depends on
+        the intensity scale of the FOD image.
 
     sphere : str, default="repulsion724"
         DIPY sphere used to sample FOD amplitudes.
@@ -336,7 +337,9 @@ def graph_from_fod(image, *, wm_mask=None, exclusion_mask=None,
         SH basis convention used by the input FOD coefficients.
 
     legacy : bool, default=False
-        DIPY legacy convention for the selected SH basis.
+        DIPY legacy convention for the selected SH basis. False matches
+        MRtrix3 dwi2fod output; True is the older MRtrix 0.2-style
+        convention.
 
     kappa : float, default=8.0
         Angular selectivity parameter for the directional FOD kernels.
