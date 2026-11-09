@@ -169,3 +169,48 @@ def test_sh_basis_defaults_agree():
         return (p["sphere"].default, p["basis"].default, p["legacy"].default)
 
     assert defaults(fod_kernels) == defaults(graph_from_fod) == defaults(add_roi_nodes)
+
+def _tube_phantom(direction, n=24, length=10, radius=2.0, k=16.0):
+    """Straight fibre tube through the grid centre, capped by ROIs 1 and 2."""
+    import nibabel as nib
+    from dipy.data import get_sphere
+    from dipy.reconst.shm import sf_to_sh
+
+    sphere = get_sphere(name="repulsion724")
+    d = np.asarray(direction, float)
+    d /= np.linalg.norm(d)
+    sh = sf_to_sh(np.exp(k * ((sphere.vertices @ d) ** 2 - 1)), sphere,
+                  sh_order_max=8, basis_type="tournier07", legacy=False)
+
+    grid = np.stack(np.meshgrid(*[np.arange(n)] * 3, indexing="ij"), axis=-1) - n // 2
+    t = grid @ d
+    r = np.linalg.norm(grid - t[..., None] * d, axis=-1)
+    inside = r <= radius
+
+    wm = inside & (np.abs(t) <= length / 2)
+    labels = np.zeros((n, n, n), int)
+    labels[inside & (t > length / 2) & (t <= length / 2 + 2)] = 1
+    labels[inside & (t < -length / 2) & (t >= -length / 2 - 2)] = 2
+
+    fod = np.zeros((n, n, n, len(sh)), np.float32)
+    fod[inside] = sh
+    return nib.Nifti1Image(fod, np.eye(4)), wm, labels
+
+
+@pytest.mark.parametrize("direction", [(1, 0, 0), (1, 1, 0), (1, 1, 1)])
+def test_roi_contacts_for_oblique_tracts(direction):
+    """An ROI must connect to a tract whatever its angle to the voxel grid."""
+    pytest.importorskip("nibabel")
+    pytest.importorskip("dipy")
+    from fsc.voxel import graph_from_fod, add_roi_nodes
+
+    image, wm, labels = _tube_phantom(direction)
+    wm_graph, voxel = graph_from_fod(image, wm_mask=wm, fod_norm_threshold=0.0)
+    graph, parc = add_roi_nodes(wm_graph, voxel, image, labels, roi_labels=[1, 2])
+
+    fc = np.array([[0.0, 1.0], [1.0, 0.0]])
+    currents = fsc.solve_fsc_voxel(graph, parc, fc, solver="direct")
+
+    idx = parc.interface_edge_indices
+    out_of_roi1 = idx[graph.edge_i[idx] == parc.roi_nodes[0]]
+    assert np.abs(currents[out_of_roi1]).sum() > 0
