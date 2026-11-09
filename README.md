@@ -64,7 +64,7 @@ FC must be square and symmetric. Only finite, positive values above the diagonal
 `solve_from_parcellations()` has two methods:
 
 - `method="pairwise"` (default) solves each FC pair separately and sums the absolute edge currents. It works for any FC matrix.
-- `method="joint"` solves all FC constraints in one modified-nodal-analysis system as in the Network Neuroscience paper (Eq. 11). Returns absolute edge currents. Requires the FC pairs to contain no cycles, e.g. a set of disjoint pairs like the FiberCup example. Otherwise and error is raised. Three regions with positive FC between all of them already form a cycle. So, a dense FC matrix has likely no exact joint solution.
+- `method="joint"` solves all FC constraints in one modified-nodal-analysis system as in the Network Neuroscience paper (Eq. 11). Returns absolute edge currents. Requires the FC pairs to contain no cycles, e.g. a set of disjoint pairs like the FiberCup example. Otherwise, error is raised. Three regions with positive FC between all of them already form a cycle. So, a dense FC matrix has likely no exact joint solution.
 
 ```python
 fc = np.zeros((5, 5))
@@ -76,6 +76,31 @@ pairwise = fsc.solve_from_parcellations(sc, fc)   # different for several pairs
 ```
 
 The two methods agree for a single FC pair and generally differ for several, because the joint solve combines the constraints in one potential field while the pairwise method sums the magnitudes of separate solutions.
+
+#### Mapping support to streamlines
+
+The support matrix can be mapped back onto a tractogram so that each streamline gets a weight for visualisation, filtering, or analyses. The SC matrix does not have to come from fscpy. Any tool that writes a per-streamline parcel assignment, such as MRtrix3 `tck2connectome -out_assignments`, works.
+
+```python
+from fsc.parcellation import streamline_support
+
+assignments = np.loadtxt("assignments.txt", dtype=int)  # two parcel labels per streamline
+weights = np.loadtxt("sift2_weights.txt")               # optional, see below
+
+values = streamline_support(support, assignments, weights)
+np.savetxt("fsc_streamline_weights.txt", values)        # one value per streamline, input order
+```
+
+The support of each parcel pair is split among the streamlines connecting that pair in proportion to their weights. So the values of each pair's streamlines sum to `support[a, b]`. This holds for both methods and for SC from any source or normalisation. Only the relative weights within a pair matter.
+
+Requirements:
+
+- **Assignments:** exactly two labels per streamline, numbered from 1 in SC matrix order, with 0 for an unassigned endpoint. This is the default `tck2connectome -out_assignments` format. Options that write more labels per streamline (e.g. `-assignment_all_voxels`), or that add a row for node 0 to the matrix (`-keep_unassigned`) break this correspondence!
+- **Weights:** use the per-streamline weights the SC was built from. Omit them for streamline counts, pass the SIFT2 weights file if the SC used `-tck_weights_in`, or `1 / length` for length-scaled SC. Non-finite or non-positive weights mark a streamline as invalid.
+- **Output:** one non-negative value per input streamline, in input order. Unassigned, invalid and self-connecting streamlines get 0. If the SC has an edge with no streamline in `assignments`, that edge's support is not mapped.
+
+For signed streamline currents from a potential vector computed with `fsc.solve_fsc()`, use `streamline_currents()`. If SC is built inside fscpy from streamline resistances, use `sc_from_streamlines()`.
+
 
 ### Voxel workflow
 
@@ -148,7 +173,7 @@ Run the small deterministic tests without downloading neuroimaging datasets:
 python -m pytest -q
 ```
 
-The tests cover the five-node analytical solution, general MNA, the joint parcellation method and its rejection of FC with cycles, negative FC, empty FC, ROI-basis accumulation, disconnected ROIs, WM-only voxel support, and the scale-invariance of the solver's convergence check. Optional tests run when NiBabel and DIPY are installed: a synthetic-FOD end-to-end example, and a check that the default SH basis reproduces amplitudes computed by MRtrix3 (`sh2amp`) from a reference FiberCup FOD stored in `tests/data/`.
+The tests cover the five-node analytical solution, general MNA, the joint parcellation method and its rejection of FC with cycles, mapping support to streamlines, negative FC, empty FC, ROI-basis accumulation, disconnected ROIs, WM-only voxel support, and the scale-invariance of the solver's convergence check. Optional tests run when NiBabel and DIPY are installed: a synthetic-FOD end-to-end example, and a check that the default SH basis reproduces amplitudes computed by MRtrix3 (`sh2amp`) from a reference FiberCup FOD stored in `tests/data/`.
 
 ## Research
 
