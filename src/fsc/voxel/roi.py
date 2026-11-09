@@ -37,7 +37,7 @@ def add_roi_nodes(graph, voxel, fod_image, labels, roi_labels=None, *,
                   tissue_mask=None, sphere="repulsion724", basis="tournier07",
                   legacy=False, kappa=8.0, kernel_power=2.0,
                   orientation_floor=1.0, interface_scale=1.0,
-                  min_conductance=1e-12):
+                  min_conductance=1e-12, length_power=2.0):
     """Add one ROI supernode per parcel and connects it to the white-matter graph through FOD-weighted edges.
 
     Parameters
@@ -60,6 +60,8 @@ def add_roi_nodes(graph, voxel, fod_image, labels, roi_labels=None, *,
         Global multiplier for ROI-to-white-matter contact conductance.
     min_conductance : float, default=1e-12
         Minimum conductance for a retained interface.
+    length_power : float, default=2.0
+        Exponent of the voxel-centre distance in the edge conductance. 2 gives each link its share of the cross-section, so tracts aligned with any lattice direction conduct equally. 1 reproduces Eq. 4 of the Aperture Neuro paper.
 
     Returns
     -------
@@ -133,7 +135,7 @@ def add_roi_nodes(graph, voxel, fod_image, labels, roi_labels=None, *,
                 orientation_floor,
             )
 
-            conductance = interface_scale * support / lengths[direction_id]
+            conductance = interface_scale * support / lengths[direction_id] ** length_power
             valid = np.isfinite(conductance) & (conductance > min_conductance)
 
             if not np.any(valid):

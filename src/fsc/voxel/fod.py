@@ -199,17 +199,14 @@ def _neighbor_pair_slices(offset):
     return source, target
 
 
-def fod_edges(fod, mask, node_id, offsets, lengths, kernels, isotropic_baseline,
-              *, orientation_floor=1.0, min_conductance=1e-12):
+def fod_edges(fod, mask, node_id, offsets, lengths, kernels, isotropic_baseline,*, orientation_floor=1.0, min_conductance=1e-12, length_power=2.0):
     """Construct weighted structural edges between neighbouring voxels.
 
     For each of the 13 unique neighbour directions, the function identifies
     voxel pairs belonging to the structural graph and calculates their
     interface conductance from directional FOD support at both endpoints.
 
-    Conductance is the geometric mean of endpoint support divided by
-    the physical distance between voxel centres. Interfaces with
-    conductance below min_conductance are excluded.
+    Conductance is the geometric mean of endpoint support divided by the physical distance between voxel centres raised to length_power. Interfaces with conductance below min_conductance are excluded.
 
     The graph is undirected. Source and target only identify the two
     endpoints of each edge, not the direction of neural information flow.
@@ -273,7 +270,7 @@ def fod_edges(fod, mask, node_id, offsets, lengths, kernels, isotropic_baseline,
 
         # Calculate conductance across each voxel interface.
         conductance = (
-            np.sqrt(source_support * target_support) / lengths[direction_id]
+            np.sqrt(source_support * target_support) / lengths[direction_id] ** length_power
         )
 
         valid = np.isfinite(conductance) & (conductance > min_conductance)
@@ -299,7 +296,7 @@ def graph_from_fod(image, *, wm_mask=None, exclusion_mask=None,
                    fod_norm_threshold=0.25, sphere="repulsion724",
                    basis="tournier07", legacy=False, kappa=8.0,
                    kernel_power=2.0, orientation_floor=1.0,
-                   min_conductance=1e-12):
+                   min_conductance=1e-12, length_power=2.0):
     """Construct a voxel-wise weighted structural graph from an SH FOD image.
 
     Each included voxel becomes a graph node. Connections are constructed
@@ -354,6 +351,9 @@ def graph_from_fod(image, *, wm_mask=None, exclusion_mask=None,
     min_conductance : float, default=1e-12
         Minimum conductance required to retain a voxel interface.
 
+    length_power : float, default=2.0
+        Exponent of the voxel-centre distance in the edge conductance. 2 gives each link its share of the cross-section, so tracts aligned with any lattice direction conduct equally. 1 reproduces Eq. 4 of the Aperture Neuro paper.
+
     Returns
     -------
     graph : WeightedGraph
@@ -406,7 +406,8 @@ def graph_from_fod(image, *, wm_mask=None, exclusion_mask=None,
     source_nodes, target_nodes, conductances = fod_edges(
         fod, mask, node_id, offsets, lengths, kernels, isotropic_baseline,
         orientation_floor=orientation_floor,
-        min_conductance=min_conductance
+        min_conductance=min_conductance,
+        length_power=length_power
     )
 
     graph = fsc.WeightedGraph(
