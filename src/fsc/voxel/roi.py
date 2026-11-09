@@ -111,8 +111,6 @@ def add_roi_nodes(graph, voxel, fod_image, labels, roi_labels=None, *,
     
     # Collect FOD-supported contacts between ROI tissue and WM voxels.
     for direction_id, offset in enumerate(offsets):
-        if np.count_nonzero(offset) != 1:
-            continue
 
         source_slice, target_slice = _neighbor_pair_slices(offset)
 
