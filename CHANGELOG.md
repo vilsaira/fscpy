@@ -1,3 +1,11 @@
+## 2.1.0 (unreleased)
+
+### Changed (affects results)
+- Voxel workflow: ROI supernodes now connect to white matter across all 26
+  neighbours instead of the 6 face neighbours. Tracts meeting an ROI obliquely
+  were previously connected poorly or not at all, and `add_roi_nodes` could fail
+  with "No FOD-supported ROI-to-WM contacts".
+
 ## 2.0.2
 
 ### Changed (affects results)
