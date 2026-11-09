@@ -7,6 +7,7 @@ import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import MatrixRankWarning, minres, spsolve, cg, LinearOperator
 from scipy.sparse.csgraph import connected_components
+from .weighted_graph import WeightedGraph
 
 @dataclass
 class FunctionalConnectivity:
@@ -285,20 +286,24 @@ def solve_fsc(structural_graph, functional_connectivity, *, ground_node=0,
 
 def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
                     ground_node=0, solver="auto", rtol=1e-4, maxiter=None):
-    """Compute voxelwise FSC from reusable ROI-relative Laplacian solutions.
+    """Compute voxelwise FSC by solving each FC pair separately.
 
-    Each ROI is a structural graph supernode. Solving unit-current
-    problems relative to a reference ROI provides basis potentials
-    whose differences solve the pairwise MNA equations.
+    For a pair of ROIs (a, b), only the white-matter graph and the contact
+    edges of ROIs a and b take part. All other ROIs are left out, so no
+    ROI supernode can carry current between bundles. ROI b is grounded,
+    unit current is injected at ROI a, and the solution is scaled so that
+    the potential difference equals the FC value. Absolute edge currents
+    are summed over pairs. Pairs without a structural path contribute zero.
+
+    ground_node is ignored; it is kept so that existing calls still work.
     """
     fc = np.asarray(fc, dtype=float)
-    roi_nodes = parcellation.roi_nodes
+    roi_nodes = np.asarray(parcellation.roi_nodes)
     n_rois = len(roi_nodes)
     n_nodes = structural_graph.n_nodes
 
     if fc.shape != (n_rois, n_rois):
         raise ValueError("FC and parcellation dimensions differ.")
-
     if solver not in ("auto", "cg", "direct"):
         raise ValueError(f"Unknown voxel solver: {solver}")
 
@@ -306,115 +311,78 @@ def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
         pairs, values = fc_pairs(fc)
     else:
         pairs = np.asarray(pairs, dtype=int).reshape(-1, 2)
-
         if np.any(pairs < 0) or np.any(pairs >= n_rois):
             raise ValueError("FC pair index outside parcellation.")
-
         values = fc[pairs[:, 0], pairs[:, 1]]
 
-    edge_currents = np.zeros(len(structural_graph.edge_i))
-
     # Ignore zero, nonfinite and self-connections.
-    valid = (
-        np.isfinite(values)
-        & (values > 0)
-        & (pairs[:, 0] != pairs[:, 1])
-    )
-    pairs = pairs[valid]
-    values = values[valid]
+    valid = np.isfinite(values) & (values > 0) & (pairs[:, 0] != pairs[:, 1])
+    pairs, values = pairs[valid], values[valid]
+
+    edge_i = structural_graph.edge_i
+    edge_j = structural_graph.edge_j
+    conductance = structural_graph.conductance
+    edge_currents = np.zeros(len(edge_i))
 
     if len(pairs) == 0:
         return edge_currents
 
-    # Prepare the grounded structural Laplacian.
-    laplacian, components, representatives = _prepare_mna(
-        structural_graph, ground_node
-    )
+    # Each edge touching a supernode is a contact of that ROI; all other
+    # edges belong to the white-matter graph and are used for every pair.
+    roi_index = np.full(n_nodes, -1)
+    roi_index[roi_nodes] = np.arange(n_rois)
+    edge_roi = np.maximum(roi_index[edge_i], roi_index[edge_j])
 
-    # Functional pairs without a structural path contribute no current.
-    pair_nodes = roi_nodes[pairs]
-    connected = (
-        components[pair_nodes[:, 0]]
-        == components[pair_nodes[:, 1]]
-    )
-    pairs = pairs[connected]
-    values = values[connected]
+    def partial_laplacian(selected):
+        return WeightedGraph(
+            n_nodes, edge_i[selected], edge_j[selected], conductance[selected]
+        ).laplacian()
 
-    if len(pairs) == 0:
-        return edge_currents
+    wm_laplacian = partial_laplacian(edge_roi < 0)
+    contact_laplacians = {}
 
-    ground_nodes = representatives.copy()
-    ground_nodes[components[ground_node]] = ground_node
+    for (a, b), value in zip(pairs, values):
+        for roi in (a, b):
+            if roi not in contact_laplacians:
+                contact_laplacians[roi] = partial_laplacian(edge_roi == roi)
 
-    mask = np.ones(n_nodes, dtype=bool)
-    mask[ground_nodes] = False
+        laplacian = (
+            wm_laplacian + contact_laplacians[a] + contact_laplacians[b]
+        ).tocsr()
+        source, target = roi_nodes[a], roi_nodes[b]
 
-    matrix = laplacian[mask][:, mask].tocsr()
+        # Solve only within the component that contains ROI a.
+        _, labels = connected_components(laplacian, directed=False)
+        keep = labels == labels[source]
+        if not keep[target]:
+            continue  # no structural path between the two ROIs
 
-    diagonal = matrix.diagonal()
-    preconditioner = LinearOperator(
-        matrix.shape,
-        matvec=lambda x: x / diagonal,
-        dtype=float,
-    )
-
-    # Choose one reference ROI per connected component.
-    active_rois = np.unique(pairs)
-    references = {}
-
-    for roi in active_rois:
-        component = components[roi_nodes[roi]]
-        if component not in references:
-            references[component] = roi
-
-    # Compute reusable unit-current potential fields.
-    basis = {}
-
-    for roi in active_rois:
-        component = components[roi_nodes[roi]]
-        reference = references[component]
-
-        if roi == reference:
-            basis[roi] = np.zeros(n_nodes)
-            continue
-
+        keep[target] = False  # ground ROI b
+        matrix = laplacian[keep][:, keep].tocsr()
         rhs = np.zeros(n_nodes)
-        rhs[roi_nodes[roi]] = 1.0
-        rhs[roi_nodes[reference]] = -1.0
+        rhs[source] = 1.0
 
         if solver == "direct":
-            solution = spsolve(matrix.tocsc(), rhs[mask])
+            solution = spsolve(matrix.tocsc(), rhs[keep])
         else:
-            solution, status = cg(
-                matrix,
-                rhs[mask],
-                M=preconditioner,
-                rtol=rtol,
-                maxiter=maxiter,
+            diagonal = matrix.diagonal()
+            preconditioner = LinearOperator(
+                matrix.shape, matvec=lambda x: x / diagonal, dtype=float
             )
-
+            solution, status = cg(
+                matrix, rhs[keep], M=preconditioner, rtol=rtol, maxiter=maxiter
+            )
             if status != 0:
                 raise RuntimeError(
-                    f"CG did not converge for ROI {roi} "
-                    f"(status={status})."
+                    f"CG did not converge for ROI pair {(a, b)} (status={status})."
                 )
 
         potentials = np.zeros(n_nodes)
-        potentials[mask] = solution
-        basis[roi] = potentials
-
-    # Reconstruct FC-pair solutions from differences of basis fields.
-    for pair, value in zip(pairs, values):
-        i, j = pair
-        source, target = roi_nodes[pair]
-
-        potentials = basis[i] - basis[j]
-        resistance = potentials[source] - potentials[target]
+        potentials[keep] = solution
+        resistance = potentials[source]  # ROI b is at zero potential
 
         if not np.isfinite(resistance) or resistance <= 0:
-            raise RuntimeError(
-                f"Invalid effective resistance for ROI pair {pair}."
-            )
+            raise RuntimeError(f"Invalid effective resistance for ROI pair {(a, b)}.")
 
         current = value / resistance
         potentials *= current
@@ -423,23 +391,20 @@ def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
         balance = laplacian @ potentials
         balance[source] -= current
         balance[target] += current
+        relative_residual = np.linalg.norm(balance) / abs(current)
 
-        relative_residual = np.linalg.norm(balance) / np.abs(current)
-
-        if (
-            not np.isfinite(relative_residual)
-            or relative_residual > max(10 * rtol, 1e-10)
-        ):
+        if not np.isfinite(relative_residual) or relative_residual > max(10 * rtol, 1e-10):
             raise RuntimeError(
-                f"Inaccurate solution for ROI pair {pair}: "
+                f"Inaccurate solution for ROI pair {(a, b)}: "
                 f"relative residual={relative_residual:.3g}"
             )
 
-        currents = structural_graph.conductance * (
-            potentials[structural_graph.edge_i]
-            - potentials[structural_graph.edge_j]
+        # Edges of other ROIs are not part of this pair's graph.
+        active = (edge_roi < 0) | (edge_roi == a) | (edge_roi == b)
+        currents = np.where(
+            active, conductance * (potentials[edge_i] - potentials[edge_j]), 0.0
         )
-
         edge_currents += np.abs(currents)
 
     return edge_currents
+
