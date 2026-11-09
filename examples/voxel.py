@@ -15,7 +15,7 @@ from fsc.voxel import add_roi_nodes, graph_from_fod, sum_pairwise_support
 sphere = get_sphere(name="repulsion724")
 profile = 0.2 + 4.0 * np.abs(sphere.vertices[:, 0]) ** 8
 coefficients = sf_to_sh(
-    profile, sphere, sh_order_max=4, basis_type="tournier07", legacy=True
+    profile, sphere, sh_order_max=4, basis_type="tournier07", legacy=False
 )
 
 fod = np.zeros((9, 5, 5, len(coefficients)), dtype=np.float32)

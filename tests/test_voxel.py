@@ -1,10 +1,11 @@
 """Synthetic voxel graph tests; no MRI datasets or DIPY installation needed."""
 
 import numpy as np
-
+import pytest
 import fsc
 from fsc.voxel import ParcellationMapping, VoxelMapping, voxel_support
-
+from pathlib import Path
+import inspect
 
 def synthetic_graph():
     # WM graph: 0 -- 1 -- 2; ROI nodes 3, 4, 5 attach to WM 0, 2, 1.
@@ -101,3 +102,70 @@ def test_synthetic_fod_example():
     output = runpy.run_path(str(script))
     support = output["support"]
     assert np.all(support[2:7, 2, 2] > 0)
+
+
+def lattice_graph(nx, ny, conductance):
+    """nx-by-ny WM lattice; ROI A touches column x=0, ROI B touches x=nx-1."""
+    idx = np.arange(nx * ny).reshape(nx, ny)
+    h_i, h_j = idx[:-1, :].ravel(), idx[1:, :].ravel()
+    v_i, v_j = idx[:, :-1].ravel(), idx[:, 1:].ravel()
+    n_wm = nx * ny
+    roi_a, roi_b = n_wm, n_wm + 1
+    left, right = idx[0, :], idx[-1, :]
+
+    edge_i = np.concatenate((h_i, v_i, np.full(ny, roi_a), np.full(ny, roi_b)))
+    edge_j = np.concatenate((h_j, v_j, left, right))
+    graph = fsc.WeightedGraph(
+        n_nodes=n_wm + 2,
+        edge_i=edge_i,
+        edge_j=edge_j,
+        conductance=np.full(len(edge_i), conductance),
+    )
+    n_roi_edges = 2 * ny
+    parcels = ParcellationMapping(
+        roi_labels=np.array([1, 2]),
+        roi_nodes=np.array([roi_a, roi_b]),
+        interface_edge_indices=np.arange(len(edge_i) - n_roi_edges, len(edge_i)),
+        contact_voxel_indices=np.arange(n_roi_edges),
+    )
+    return graph, parcels
+
+
+@pytest.mark.parametrize("conductance", [1e-2, 1.0, 1e3, 1e6])
+def test_convergence_check_is_scale_invariant(conductance):
+    """A correct CG solution must not be rejected because conductances are large."""
+    graph, parcels = lattice_graph(30, 30, conductance)
+    fc = np.array([[0.0, 0.7], [0.7, 0.0]])
+
+    # Default rtol on purpose: it lets CG stop near the tolerance,
+    # which is what exposes the faulty residual check.
+    cg_currents = fsc.solve_fsc_voxel(graph, parcels, fc, solver="cg")
+    reference = fsc.solve_fsc_voxel(graph, parcels, fc, solver="direct")
+
+    np.testing.assert_allclose(
+        cg_currents, reference, rtol=1e-2, atol=1e-3 * reference.max()
+    )
+
+def test_default_sh_basis_matches_mrtrix3():
+    """Default SH basis must decode MRtrix3 FOD coefficients like sh2amp."""
+    pytest.importorskip("dipy")
+    from fsc.voxel.fod import fod_kernels
+
+    ref = np.load(Path(__file__).parent / "data" / "mrtrix3_sh_reference.npz")
+    coefficients = ref["coefficients"]
+    _, sh_basis = fod_kernels(coefficients.shape[1], np.eye(3))  # defaults, any directions
+
+    predicted = coefficients @ sh_basis[ref["vertex_indices"]].T
+    np.testing.assert_allclose(predicted, ref["amplitudes"], atol=1e-5)
+
+
+def test_sh_basis_defaults_agree():
+    """graph_from_fod and add_roi_nodes must default to the same basis."""
+    from fsc.voxel.fod import fod_kernels, graph_from_fod
+    from fsc.voxel.roi import add_roi_nodes
+
+    def defaults(fn):
+        p = inspect.signature(fn).parameters
+        return (p["sphere"].default, p["basis"].default, p["legacy"].default)
+
+    assert defaults(fod_kernels) == defaults(graph_from_fod) == defaults(add_roi_nodes)

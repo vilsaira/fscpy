@@ -424,7 +424,7 @@ def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
         balance[source] -= current
         balance[target] += current
 
-        relative_residual = np.linalg.norm(balance) / value
+        relative_residual = np.linalg.norm(balance) / np.abs(current)
 
         if (
             not np.isfinite(relative_residual)
