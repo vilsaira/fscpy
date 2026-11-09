@@ -45,50 +45,59 @@ def streamline_currents(potentials, assignments, resistances):
     currents[valid] = (potentials[source] - potentials[target]) / resistance
     return currents
 
-def streamline_support(support, sc, assignments, resistances):
+def streamline_support(support, assignments, weights=None):
     """Distribute parcellation FSC support over individual streamlines.
 
-    Each streamline between parcels a and b receives
+    The support of each parcel pair is split among the streamlines
+    connecting that pair, in proportion to their weights:
 
-        support[a, b] / (resistance * sc[a, b]),
+        value_s = support[a, b] * w_s / sum(w_t for streamlines t between a and b)
 
-    the share of the edge support proportional to its conductance. This is
-    the absolute current the streamline would carry as a resistor between
-    the solved potentials, accumulated in the same way as the support
-    matrix. It applies to both solve_from_parcellations() methods 'joint' and 'pairwise'.
+    The values of each pair's streamlines therefore sum to support[a, b],
+    whatever method produced the SC matrix. Weights
+    defaults to equal weights (streamline counts). If needed, pass the per-streamline weights the SC was built from, e.g. SIFT2 weights or 1 / length. Only relative weights within a pair matter.
 
-    When sc was built from the same streamlines with sc_from_streamlines(),
-    the values of the streamlines between each parcel pair sum to
-    support[a, b]. With SC from another source, the values are still
-    proportional to streamline conductance but need not sum to it.
-
-    Returns one non-negative value per input streamline preserving their
-    order. Invalid, unassigned and self-connecting streamlines, and
-    streamlines whose parcel pair has no SC edge receive zero weight.
+    Assignments holds two parcel labels per streamline. Numbered from 1 in
+    SC matrix order, with 0 for an unassigned endpoint (as in MRtrix3
+    tck2connectome -out_assignments). Returns one non-negative value per
+    input streamline in input order. Invalid, unassigned and
+    self-connecting streamlines receive zero. Support on parcel pairs
+    without any valid streamline is not mapped.
     """
     support = np.asarray(support, dtype=float)
-    sc = np.asarray(sc, dtype=float)
     n_nodes = len(support)
-    if support.shape != (n_nodes, n_nodes) or sc.shape != support.shape:
-        raise ValueError("Support and SC must be square matrices of equal size.")
+    if support.shape != (n_nodes, n_nodes):
+        raise ValueError("Support must be a square matrix.")
 
-    valid, endpoints, resistance = _valid_streamlines(
-        assignments, resistances, n_nodes
+    assignments = np.asarray(assignments, dtype=int)
+    if assignments.ndim != 2 or assignments.shape[1] != 2:
+        raise ValueError("Assignments must hold two parcel labels per streamline.")
+
+    if weights is None:
+        weights = np.ones(len(assignments))
+    weights = np.asarray(weights, dtype=float)
+    if weights.shape != (len(assignments),):
+        raise ValueError("One weight per streamline is required.")
+
+    # The same validity rule as for resistances: finite and positive.
+    valid, endpoints, w = _valid_streamlines(assignments, weights, n_nodes)
+    low = np.minimum(endpoints[:, 0], endpoints[:, 1])
+    high = np.maximum(endpoints[:, 0], endpoints[:, 1])
+
+    pair_weight = np.zeros((n_nodes, n_nodes))
+    np.add.at(pair_weight, (low, high), w)
+
+    shares = np.zeros(len(low))
+    distinct = low != high
+    shares[distinct] = (
+        support[low[distinct], high[distinct]]
+        * w[distinct] / pair_weight[low[distinct], high[distinct]]
     )
-    source = endpoints[:, 0]
-    target = endpoints[:, 1]
 
-    edge_sc = sc[source, target]
-    has_edge = (source != target) & (edge_sc > 0)
-
-    shares = np.zeros(len(source))
-    shares[has_edge] = support[source[has_edge], target[has_edge]] / (
-        resistance[has_edge] * edge_sc[has_edge]
-    )
-
-    values = np.zeros(len(np.asarray(resistances)))
+    values = np.zeros(len(assignments))
     values[valid] = shares
     return values
+
 
 
 def sc_from_streamlines(assignments, resistances, n_nodes):
