@@ -134,7 +134,7 @@ nib.save(nib.Nifti1Image(support, fod_image.affine), 'fsc_support.nii.gz')
 
 - **SH basis.** The FOD image must contain SH coefficients in the MRtrix3 convention, as written by `dwi2fod`. This is DIPY's `tournier07` basis with `legacy=False`, which is the default. FODs in the older MRtrix 0.2 convention need `legacy=True`.
   Since version 2.0.2 the default is `legacy=False`; earlier versions defaulted to `legacy=True`. Pass `legacy=True` explicitly to reproduce results from those versions.
-- **Same settings in both calls.** Pass identical `sphere`, `basis`, `legacy`, `kappa`, `kernel_power` and `orientation_floor` values to `graph_from_fod()` and `add_roi_nodes()`. They are not cross-checked.
+- **Same settings in both calls.** Pass identical `sphere`, `basis`, `legacy`, `kappa`, `kernel_power`, `orientation_floor` and `length_power` values to `graph_from_fod()` and `add_roi_nodes()`. They are not cross-checked.
 - **Frame.** Neighbour directions are computed in world coordinates from the image affine, so the SH coefficients must be defined in that same frame, as MRtrix3 does. The image must have a correct affine.
 - **Registration.** `labels_in_fod_space()` uses nearest-neighbour resampling and assumes the images are **already spatially registered**. It does not register images or reorient SH coefficients.
 - **Masks.** An optional `wm_mask` restricts graph voxels and an optional `exclusion_mask` removes voxels. The FOD-norm threshold is always applied in addition to `wm_mask`.
@@ -143,10 +143,11 @@ nib.save(nib.Nifti1Image(support, fod_image.affine), 'fsc_support.nii.gz')
 #### How the graph is built
 
 - **Nodes.** Voxels whose SH coefficient vector has a Euclidean norm above `fod_norm_threshold` (default 0.25), inside `wm_mask` if given. This threshold depends on the FOD intensity scale, so check it against your FOD normalisation.
-- **Edges.** Each voxel is connected to its 26 neighbours (13 unique directions). The conductance of an interface is `sqrt(s_i · s_j) / ℓ`, where `ℓ` is the physical distance between voxel centres and `s` is the directional support of each endpoint. Interfaces below `min_conductance` (default 1e-12) are dropped.
+- **Edges.** Each voxel is connected to its 26 neighbours (13 unique directions). The conductance of an interface is `sqrt(s_i · s_j) / ℓ^p`, where `ℓ` is the physical distance between voxel centres, `s` is the directional support of each endpoint and `p = length_power` (default 2). With `p = 2` each link gets its share of the cross-section, so tracts aligned with an axis or a lattice diagonal conduct equally. Interfaces below min_conductance (default 1e-12) are dropped.
 - **Directional support.** The FOD amplitude along the interface direction is evaluated with an angular averaging kernel, with weights proportional to `exp(κ·|cos θ|^p)` over the sampling sphere (default `repulsion724`, `kappa=8`, `kernel_power=2`). It is clipped at zero after averaging, reduced by `orientation_floor` times the mean positive FOD amplitude of the voxel, and clipped at zero again. This kernel averaging is an implementation detail: the papers evaluate the FOD directly along the interface direction.
-- **ROI supernodes.** Each ROI is a graph node. Labelled voxels outside the WM graph are ROI tissue; each one connects to adjacent WM voxels across all 26 neighbours, like the WM graph. The conductance of a contact is interface_scale times the WM voxel's directional support along the contact direction, divided by the distance between voxel centres. Support is taken from the WM side only. All ROI supernodes are present in the graph when any pair is solved.
+- **ROI supernodes.** Each ROI is a graph node. Labelled voxels outside the WM graph are ROI tissue. Each one connects to adjacent WM voxels across all 26 neighbours, like the WM graph. The conductance of a contact is interface_scale times the WM voxel's directional support along the contact direction divided by `ℓ^p`. Support is taken from the WM side only. All ROI supernodes are present in the graph when any pair is solved.
 - **Support map.** Voxel support is the sum of absolute currents on the WM–WM edges incident to a voxel, accumulated over all FC pairs. ROI–WM interface edges are excluded.
+- **Known limitation: orientation dependence.** Links exist only to the 26 neighbours, so a tract running between lattice directions (for example 10°–30° off an axis) has to zig-zag and appears more resistive than the same tract aligned with the grid. In synthetic tests with sharp FODs this made the resistance per mm 1.5–2.5× higher for most such angles, and up to about 25× in the sharpest case.
 
 #### Solving
 
@@ -162,8 +163,8 @@ The low-level `fsc.solve_fsc()` interface solves **simultaneous** functional con
 
 ## Relation to the publications
 
-- **Network Neuroscience (parcellation workflow).** The paper formulates FSC as one joint modified-nodal-analysis system (Eq. 11), with all constraints solved together. `solve_from_parcellations(..., method="joint")` implements it for FC pairs without cycles like in the FiberCup specificity test. When FC pairs form cycles, as many dense FC matrices, the constraints cannot all hold at once andthe joint system has no exact solution. For such inputs use the default `method="pairwise"`, which solves each pair separately and sums absolute currents. The two methods agree for a single constraint.
-- **Aperture Neuro (voxel workflow).** The Methods describe imposing each selected FC value separately and accumulating the resulting current magnitudes, which is what `sum_pairwise_support()` does. The directional-support kernel and the 0.25 norm threshold are implementation choices not given in the paper.
+- **Network Neuroscience (parcellation workflow).** The paper formulates FSC as one joint modified-nodal-analysis system (Eq. 11), with all constraints solved together. `solve_from_parcellations(..., method="joint")` implements it for FC pairs without cycles like in the FiberCup specificity test. When FC pairs form cycles, as many dense FC matrices, the constraints cannot all hold at once and the joint system has no exact solution. For such inputs use the default `method="pairwise"`, which solves each pair separately and sums absolute currents. The two methods agree for a single constraint.
+- **Aperture Neuro (voxel workflow).** The Methods describe imposing each selected FC value separately and accumulating the resulting current magnitudes, which is what sum_pairwise_support() does. The directional-support kernel and the 0.25 norm threshold are implementation choices not given in the paper. **Since version 2.1.0 the voxel graph differs from the published method:** ROIs connect to white matter across all 26 neighbours (the paper used face neighbours only), and conductance scales as 1/ℓ² instead of the paper's 1/ℓ (Eq. 4). To reproduce the published results, use fscpy 2.0.2.
 
 ## Tests
 
@@ -173,7 +174,7 @@ Run the small deterministic tests without downloading neuroimaging datasets:
 python -m pytest -q
 ```
 
-The tests cover the five-node analytical solution, general MNA, the joint parcellation method and its rejection of FC with cycles, mapping support to streamlines, negative FC, empty FC, ROI-basis accumulation, disconnected ROIs, WM-only voxel support, and the scale-invariance of the solver's convergence check. Optional tests run when NiBabel and DIPY are installed: a synthetic-FOD end-to-end example, and a check that the default SH basis reproduces amplitudes computed by MRtrix3 (`sh2amp`) from a reference FiberCup FOD stored in `tests/data/`.
+The tests cover the five-node analytical solution, general MNA, the joint parcellation method and its rejection of FC with cycles, mapping support to streamlines, negative FC, empty FC, ROI-basis accumulation, disconnected ROIs, ROI contacts for oblique tracts, equal conduction along axis and diagonal tracts, WM-only voxel support, and the scale-invariance of the solver's convergence check. Optional tests run when NiBabel and DIPY are installed: a synthetic-FOD end-to-end example, and a check that the default SH basis reproduces amplitudes computed by MRtrix3 (`sh2amp`) from a reference FiberCup FOD stored in `tests/data/`.
 
 ## Research
 
