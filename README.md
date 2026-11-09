@@ -4,7 +4,7 @@
 
 The Python package is imported as `fsc` and provides two workflows:
 
-- **Parcellation FSC:** a structural connectivity (SC) matrix and a functional connectivity (FC) matrix produce a symmetric matrix of structural-edge support. Related publication: the Network Neuroscience paper [doi:10.1162/NETN.a.589](https://doi.org/10.1162/NETN.a.589). See [Relation to the publications](#relation-to-the-publications) for how this implementation differs from the paper's joint formulation.
+- **Parcellation FSC:** a structural connectivity (SC) matrix and a functional connectivity (FC) matrix produce a symmetric matrix of structural-edge support. Related publication: the Network Neuroscience paper [doi:10.1162/NETN.a.589](https://doi.org/10.1162/NETN.a.589). The paper's joint formulation is available as `method="joint"` for FC without cycles, and a pairwise variant for dense FC is the default; see [Relation to the publications](#relation-to-the-publications).
 - **Voxelwise FSC:** a spherical-harmonic fibre orientation distribution (FOD) defines a weighted white-matter voxel graph. One supernode per functional parcel connects to neighbouring white-matter voxels through FOD-supported interfaces. The output is a voxelwise map of white-matter edge support. This version is explained in the Aperture Neuro paper [doi:10.52294/001c.172225](https://doi.org/10.52294/001c.172225).
 
 These workflows use different structural graphs, so their numerical outputs are **not interchangeable**.
@@ -60,6 +60,22 @@ print(support)
 `solve_from_parcellations()` returns the **symmetric support matrix**, not an `FSCResult` object. In this example, the only structural path connecting parcels 1 and 4 is 1–0–2–4. Its three unit-conductance edges each carry support `1/3`; the side branch 2–3 carries zero current.
 
 FC must be square and symmetric. Only finite, positive values above the diagonal are used. Negative, zero and non-finite values are ignored. The papers used Fisher *z*-transformed FC; the package uses whatever values it is given, and the output scales linearly with the FC magnitudes.
+
+`solve_from_parcellations()` has two methods:
+
+- `method="pairwise"` (default) solves each FC pair separately and sums the absolute edge currents. It works for any FC matrix.
+- `method="joint"` solves all FC constraints in one modified-nodal-analysis system as in the Network Neuroscience paper (Eq. 11). Returns absolute edge currents. Requires the FC pairs to contain no cycles, e.g. a set of disjoint pairs like the FiberCup example. Otherwise and error is raised. Three regions with positive FC between all of them already form a cycle. So, a dense FC matrix has likely no exact joint solution.
+
+```python
+fc = np.zeros((5, 5))
+fc[1, 4] = fc[4, 1] = 1
+fc[3, 4] = fc[4, 3] = 1      # two pairs sharing node 4: no cycle
+
+joint = fsc.solve_from_parcellations(sc, fc, method="joint")
+pairwise = fsc.solve_from_parcellations(sc, fc)   # different for several pairs
+```
+
+The two methods agree for a single FC pair and generally differ for several, because the joint solve combines the constraints in one potential field while the pairwise method sums the magnitudes of separate solutions.
 
 ### Voxel workflow
 
@@ -117,11 +133,11 @@ The voxel workflow applies each finite, positive FC pair **independently in the 
 
 In both workflows, only positive FC values define imposed potential differences; negative values are ignored. SC values and FOD interface weights act as conductances, **not lengths or resistances**. FSC reports how the weighted structural graph supports the imposed correlations; it is not a direct measurement of axonal traffic or a uniquely determined anatomical tract.
 
-The low-level `fsc.solve_fsc()` interface solves **simultaneous** functional constraints through modified nodal analysis and returns an `FSCResult` (potentials, currents and residual diagnostics). The constraints must be mutually compatible. This holds for a sparse set of constraints, such as the five relationships of the FiberCup experiment. A dense FC matrix generally does not satisfy this, because it imposes far more potential differences than the graph has free potentials. For dense FC, use `solve_from_parcellations()` or `solve_fsc_voxel()`, which evaluate FC pairs separately and sum their absolute structural-edge currents.
+The low-level `fsc.solve_fsc()` interface solves **simultaneous** functional constraints through modified nodal analysis and returns an `FSCResult` (potentials, currents and residual diagnostics). The constraints must be mutually compatible. The imposed potential differences must sum to zero around every cycle of constrained pairs. Constraints without cycles, e.g. the FiberCup experiment, always satisfy this. Whereas a dense FC matrix likely does not because it imposes far more potential differences than the graph has free potentials. `solve_from_parcellations(..., method="joint")` wraps this interface and checks for cycles before solving. For dense FC, use `solve_from_parcellations()` with the default `method="pairwise"`, or `solve_fsc_voxel()`, which evaluate FC pairs separately and sum their absolute structural-edge currents.
 
 ## Relation to the publications
 
-- **Network Neuroscience (parcellation workflow).** The paper formulates FSC as one joint modified-nodal-analysis system (its Eq. 11), with all constraints solved together. That corresponds to `fsc.solve_fsc()`. `solve_from_parcellations()` is a pairwise variant: it solves each FC pair separately and sums absolute currents, so its output is not the same quantity. The two agree for a single constraint and generally differ for several.
+- **Network Neuroscience (parcellation workflow).** The paper formulates FSC as one joint modified-nodal-analysis system (Eq. 11), with all constraints solved together. `solve_from_parcellations(..., method="joint")` implements it for FC pairs without cycles like in the FiberCup specificity test. When FC pairs form cycles, as many dense FC matrices, the constraints cannot all hold at once andthe joint system has no exact solution. For such inputs use the default `method="pairwise"`, which solves each pair separately and sums absolute currents. The two methods agree for a single constraint.
 - **Aperture Neuro (voxel workflow).** The Methods describe imposing each selected FC value separately and accumulating the resulting current magnitudes, which is what `sum_pairwise_support()` does. The directional-support kernel, the six-face ROI contacts and the 0.25 norm threshold are implementation choices not given in the paper.
 
 ## Tests
@@ -132,7 +148,7 @@ Run the small deterministic tests without downloading neuroimaging datasets:
 python -m pytest -q
 ```
 
-The tests cover the five-node analytical solution, general MNA, negative FC, empty FC, ROI-basis accumulation, disconnected ROIs, WM-only voxel support, and the scale-invariance of the solver's convergence check. Optional tests run when NiBabel and DIPY are installed: a synthetic-FOD end-to-end example, and a check that the default SH basis reproduces amplitudes computed by MRtrix3 (`sh2amp`) from a reference FiberCup FOD stored in `tests/data/`.
+The tests cover the five-node analytical solution, general MNA, the joint parcellation method and its rejection of FC with cycles, negative FC, empty FC, ROI-basis accumulation, disconnected ROIs, WM-only voxel support, and the scale-invariance of the solver's convergence check. Optional tests run when NiBabel and DIPY are installed: a synthetic-FOD end-to-end example, and a check that the default SH basis reproduces amplitudes computed by MRtrix3 (`sh2amp`) from a reference FiberCup FOD stored in `tests/data/`.
 
 ## Research
 
