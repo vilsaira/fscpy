@@ -170,6 +170,9 @@ def test_sh_basis_defaults_agree():
 
     assert defaults(fod_kernels) == defaults(graph_from_fod) == defaults(add_roi_nodes)
 
+    assert (inspect.signature(graph_from_fod).parameters["length_power"].default == inspect.signature(add_roi_nodes).parameters["length_power"].default)
+
+
 def _tube_phantom(direction, n=24, length=10, radius=2.0, k=16.0):
     """Straight fibre tube through the grid centre, capped by ROIs 1 and 2."""
     import nibabel as nib
@@ -214,3 +217,48 @@ def test_roi_contacts_for_oblique_tracts(direction):
     idx = parc.interface_edge_indices
     out_of_roi1 = idx[graph.edge_i[idx] == parc.roi_nodes[0]]
     assert np.abs(currents[out_of_roi1]).sum() > 0
+
+def _tube_resistance(direction, length):
+    """Effective resistance between the ROIs of a k=64 tube phantom."""
+    from fsc.voxel import graph_from_fod, add_roi_nodes
+
+    image, wm, labels = _tube_phantom(direction, n=32, length=length, radius=3.0, k=64.0)
+    wm_graph, voxel = graph_from_fod(image, wm_mask=wm, fod_norm_threshold=0.0)
+    graph, parc = add_roi_nodes(wm_graph, voxel, image, labels, roi_labels=[1, 2])
+
+    fc = np.array([[0.0, 1.0], [1.0, 0.0]])
+    currents = fsc.solve_fsc_voxel(graph, parc, fc, solver="direct")
+    idx = parc.interface_edge_indices
+    out_of_roi1 = idx[graph.edge_i[idx] == parc.roi_nodes[0]]
+    return 1.0 / np.abs(currents[out_of_roi1]).sum()
+
+
+@pytest.mark.parametrize("direction", [(1, 1, 0), (1, 1, 1)],
+                         ids=["face-diagonal", "body-diagonal"])
+def test_aligned_tracts_conduct_equally(direction):
+    """A tract along a lattice diagonal conducts like one along an axis."""
+    pytest.importorskip("nibabel")
+    pytest.importorskip("dipy")
+
+    def per_mm(d):
+        # Two lengths: the difference cancels the ROI end effects.
+        return (_tube_resistance(d, 20) - _tube_resistance(d, 10)) / 10
+
+    ratio = per_mm(direction) / per_mm((1, 0, 0))
+    assert ratio == pytest.approx(1.0, abs=0.15)
+
+
+def test_length_power_one_reproduces_paper_weights():
+    """length_power=1 gives Eq. 4 weights: each edge is l times the default."""
+    pytest.importorskip("nibabel")
+    pytest.importorskip("dipy")
+    from fsc.voxel import graph_from_fod
+
+    image, wm, _ = _tube_phantom((1, 1, 0))
+    g1, _ = graph_from_fod(image, wm_mask=wm, fod_norm_threshold=0.0, length_power=1)
+    g2, voxel = graph_from_fod(image, wm_mask=wm, fod_norm_threshold=0.0)
+
+    coords = np.argwhere(voxel.node_id >= 0)
+    ell = np.linalg.norm(coords[g2.edge_i] - coords[g2.edge_j], axis=1)
+    np.testing.assert_array_equal(g1.edge_i, g2.edge_i)
+    np.testing.assert_allclose(g1.conductance, g2.conductance * ell, rtol=1e-5)
