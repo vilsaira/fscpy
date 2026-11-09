@@ -262,3 +262,62 @@ def test_length_power_one_reproduces_paper_weights():
     ell = np.linalg.norm(coords[g2.edge_i] - coords[g2.edge_j], axis=1)
     np.testing.assert_array_equal(g1.edge_i, g2.edge_i)
     np.testing.assert_allclose(g1.conductance, g2.conductance * ell, rtol=1e-5)
+
+def _crossing_phantom(n=28, k=16.0):
+    """Two perpendicular 3-voxel-wide bundles: A along x (ROIs 1, 2 at its
+    ends) and B along y (ROIs 3, 4 at its ends)."""
+    import nibabel as nib
+    from dipy.data import get_sphere
+    from dipy.reconst.shm import sf_to_sh
+
+    sphere = get_sphere(name="repulsion724")
+
+    def fibre(d):
+        sf = np.exp(k * ((sphere.vertices @ np.asarray(d, float)) ** 2 - 1))
+        return sf_to_sh(sf, sphere, sh_order_max=8, basis_type="tournier07", legacy=False)
+
+    x, y, z = np.meshgrid(*[np.arange(n)] * 3, indexing="ij")
+    c = n // 2
+    in_a = (np.abs(y - c) <= 1) & (np.abs(z - c) <= 1)
+    in_b = (np.abs(x - c) <= 1) & (np.abs(z - c) <= 1)
+    wm = (in_a & (x >= 6) & (x <= n - 6)) | (in_b & (y >= 6) & (y <= n - 6))
+    crossing = in_a & in_b
+
+    labels = np.zeros((n, n, n), int)
+    labels[in_a & (x >= 3) & (x <= 5)] = 1
+    labels[in_a & (x >= n - 5) & (x <= n - 3)] = 2
+    labels[in_b & (y >= 3) & (y <= 5)] = 3
+    labels[in_b & (y >= n - 5) & (y <= n - 3)] = 4
+
+    sh_x, sh_y = fibre((1, 0, 0)), fibre((0, 1, 0))
+    fod = np.zeros((n, n, n, len(sh_x)), np.float32)
+    fod[in_a] = sh_x
+    fod[in_b] = sh_y
+    fod[crossing] = 0.5 * (sh_x + sh_y)
+
+    arm_b = in_b & ~crossing & wm
+    return nib.Nifti1Image(fod, np.eye(4)), wm, labels, arm_b
+
+
+def test_unrelated_rois_carry_no_current():
+    """FC between ROIs 1 and 2 must give the same support whether or not
+    unrelated ROIs 3 and 4 exist in the parcellation."""
+    pytest.importorskip("nibabel")
+    pytest.importorskip("dipy")
+    from fsc.voxel import graph_from_fod, add_roi_nodes, sum_pairwise_support
+
+    image, wm, labels, arm_b = _crossing_phantom()
+    wm_graph, voxel = graph_from_fod(image, wm_mask=wm, fod_norm_threshold=0.0)
+
+    g4, p4 = add_roi_nodes(wm_graph, voxel, image, labels, roi_labels=[1, 2, 3, 4])
+    g2, p2 = add_roi_nodes(wm_graph, voxel, image, labels, roi_labels=[1, 2])
+
+    fc4 = np.zeros((4, 4))
+    fc4[0, 1] = fc4[1, 0] = 1.0
+    fc2 = fc4[:2, :2]
+
+    s4 = sum_pairwise_support(g4, voxel, p4, fc4, solver="direct")
+    s2 = sum_pairwise_support(g2, voxel, p2, fc2, solver="direct")
+
+    np.testing.assert_allclose(s4, s2, rtol=1e-7, atol=1e-12 * s2.max())
+    assert s4[arm_b].sum() < 0.01 * s4.sum()
