@@ -1,7 +1,7 @@
 """Connect functional parcels to white matter through FOD-supported surface voxels."""
 
 from dataclasses import dataclass
-
+import warnings
 import numpy as np
 
 import fsc
@@ -37,7 +37,8 @@ def add_roi_nodes(graph, voxel, fod_image, labels, roi_labels=None, *,
                   tissue_mask=None, sphere="repulsion724", basis="tournier07",
                   legacy=False, kappa=8.0, kernel_power=2.0,
                   orientation_floor=1.0, interface_scale=1.0,
-                  min_conductance=1e-12, length_power=2.0):
+                  min_conductance=1e-12, length_power=2.0,
+                  missing_contacts="warn"):
     """Add one ROI supernode per parcel and connects it to the white-matter graph through FOD-weighted edges.
 
     Parameters
@@ -62,6 +63,11 @@ def add_roi_nodes(graph, voxel, fod_image, labels, roi_labels=None, *,
         Minimum conductance for a retained interface.
     length_power : float, default=2.0
         Exponent of the voxel-centre distance in the edge conductance. 2 gives each link its share of the cross-section, so tracts aligned with any lattice direction conduct equally. 1 reproduces Eq. 4 of the Aperture Neuro paper.
+    missing_contacts : {"warn", "raise"}, default="warn"
+        What to do when a supernode has no FOD-supported WM contact.
+        "warn" keeps it without contacts, so its FC pairs carry no
+        current, and lists all such labels in one warning. "raise"
+        raises a ValueError listing them.
 
     Returns
     -------
@@ -89,6 +95,8 @@ def add_roi_nodes(graph, voxel, fod_image, labels, roi_labels=None, *,
         raise ValueError("ROI labels must be nonempty and positive.")
     if len(np.unique(roi_labels)) != len(roi_labels):
         raise ValueError("ROI labels must be unique.")
+    if missing_contacts not in ("warn", "raise"):
+        raise ValueError("missing_contacts must be 'warn' or 'raise'.")
 
     # Tissue voxels and white-matter graph voxels are distinct nodes.
     tissue = np.isin(labels, roi_labels) & (voxel.node_id < 0)
@@ -167,12 +175,21 @@ def add_roi_nodes(graph, voxel, fod_image, labels, roi_labels=None, *,
 
     contact_roi_nodes = np.empty(len(contact_labels), dtype=int)
 
+    missing = []
     for index, label in enumerate(roi_labels):
         selected = contact_labels == label
         contact_roi_nodes[selected] = roi_nodes[index]
-
         if not np.any(selected):
-            raise ValueError(f"ROI {label} has no WM contacts.")
+            missing.append(int(label))
+
+    if missing:
+        message = (
+            f"{len(missing)} supernode(s) have no FOD-supported WM contacts "
+            f"and carry no current: labels {missing}."
+        )
+        if missing_contacts == "raise":
+            raise ValueError(message)
+        warnings.warn(message, stacklevel=2)
 
     # Append the ROI-WM edges to the existing structural graph.
     augmented_graph = fsc.WeightedGraph(
