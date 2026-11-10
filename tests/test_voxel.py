@@ -321,3 +321,23 @@ def test_unrelated_rois_carry_no_current():
 
     np.testing.assert_allclose(s4, s2, rtol=1e-7, atol=1e-12 * s2.max())
     assert s4[arm_b].sum() < 0.01 * s4.sum()
+
+def test_touching_supernodes_have_no_direct_edge():
+    """Supernodes that touch each other must only connect through WM voxels. This tests is used that the behaviour is not lost in later versions."""
+    pytest.importorskip("nibabel")
+    pytest.importorskip("dipy")
+    from fsc.voxel import graph_from_fod, add_roi_nodes
+
+    image, wm, labels, _ = _crossing_phantom()
+    n = labels.shape[0]
+    c = n // 2
+    x, y, z = np.meshgrid(*[np.arange(n)] * 3, indexing="ij")
+    # Place tissue of supernode 3 directly against supernode 1, outside the WM.
+    labels[(x == 2) & (np.abs(y - c) <= 1) & (np.abs(z - c) <= 1)] = 3
+
+    wm_graph, voxel = graph_from_fod(image, wm_mask=wm, fod_norm_threshold=0.0)
+    graph, parc = add_roi_nodes(wm_graph, voxel, image, labels, roi_labels=[1, 2, 3, 4])
+
+    is_supernode = np.zeros(graph.n_nodes, dtype=bool)
+    is_supernode[parc.roi_nodes] = True
+    assert not np.any(is_supernode[graph.edge_i] & is_supernode[graph.edge_j])
