@@ -1,4 +1,4 @@
-## 2.1.0 (unreleased)
+## 2.1.0 (2026-11-10)
 
 > **Voxel results differ from the Aperture Neuro paper.** The paper's method
 > connected ROIs to white matter through face neighbours only, scaled edge
