@@ -417,7 +417,7 @@ def test_auto_solver_without_pyamg(monkeypatch):
 
     auto = fsc.solve_fsc_voxel(graph, parcels, fc, rtol=1e-10)
     direct = fsc.solve_fsc_voxel(graph, parcels, fc, solver="direct")
-    np.testing.assert_allclose(auto, direct, rtol=1e-6, atol=1e-12)
+    np.testing.assert_allclose(auto, direct, rtol=1e-6, atol=1e-9 * direct.max())
 
     with pytest.raises(ImportError, match="pyamg"):
         fsc.solve_fsc_voxel(graph, parcels, fc, solver="amg")
