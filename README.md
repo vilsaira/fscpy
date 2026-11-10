@@ -159,7 +159,7 @@ The voxel workflow solves each finite, positive FC pair separately. For a pair o
 
 #### Running pairs in parallel
 
-FC pairs are solved independently, and the edge currents of disjoint sets of pairs add up exactly to the result for all pairs. A large analysis can therefore be split into chunks of pairs, solved in separate processes or batch jobs, and summed:
+FC pairs are solved independently, and the edge currents of disjoint sets of pairs add up to the result for all pairs (equal within the solver tolerance; separate runs can differ in the last digits). A large analysis can therefore be split into chunks of pairs, solved in separate processes or batch jobs, and summed:
 
 ```python
 from concurrent.futures import ProcessPoolExecutor
@@ -188,7 +188,7 @@ if __name__ == "__main__":
     support = voxel_support(graph, voxel_mapping, edge_currents)
 ```
 
-The `if __name__ == "__main__":` guard is required on Windows and macOS. Each worker holds its own copy of the graph, so memory use grows with `max_workers`; use at most the number of physical cores.
+The `if __name__ == "__main__":` guard is required on Windows and macOS. Each worker holds its own copy of the graph, so memory use grows with `max_workers`. Each worker holds its own copy of the graph, so memory use grows with max_workers. On a single workstation the gain is limited by memory bandwidth rather than core count. On an 8-thread desktop, 4 and 8 workers both gave about a 2× speed-up. Batch jobs on separate cluster nodes do not share memory bandwidth and scale better.
 
 The same logic works with batch systems such as Slurm job arrays: each task solves one chunk and saves its edge currents, and a final step sums them.
 
