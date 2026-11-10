@@ -1,5 +1,5 @@
 # fscpy
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.CONCEPT.svg)](https://doi.org/10.5281/zenodo.CONCEPT)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.CONCEPT.svg)](https://doi.org/10.5281/zenodo.24104200)
 
 
 **Function–structure coupling (FSC)** maps functional correlations onto the structural connections that can support them. FSC represents structural connectivity as weighted graph conductances, imposes functional connectivity as potential differences, and measures the resulting currents on structural edges.
