@@ -1,4 +1,4 @@
-## 2.1.1 (unreleased)
+## 2.1.1 (2026-11-10)
 
 Results are unchanged within the solver tolerance.
 
