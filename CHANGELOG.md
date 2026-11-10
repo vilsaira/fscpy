@@ -1,5 +1,5 @@
 ## 2.1.0 (2026-11-10)
-Archived on Zenodo: [doi:10.5281/zenodo.VERSION](https://doi.org/10.5281/zenodo.VERSION)
+Archived on Zenodo: [doi:10.5281/zenodo.24104201](https://doi.org/10.5281/zenodo.24104201)
 
 > **Voxel results differ from the Aperture Neuro paper.** The paper's method
 > connected ROIs to white matter through face neighbours only, scaled edge
