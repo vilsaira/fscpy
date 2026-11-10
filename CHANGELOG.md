@@ -23,6 +23,12 @@
   perfect conductors between bundles. `ground_node` in `solve_fsc_voxel` is now ignored.
 
 
+### Changed
+- `add_roi_nodes()` no longer stops at the first supernode without WM
+  contacts. Such supernodes carry no current and are listed in one warning;
+  `missing_contacts="raise"` restores the error, now listing all labels.
+
+
 ## 2.0.2
 
 ### Changed (affects results)

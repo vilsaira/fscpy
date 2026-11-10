@@ -138,7 +138,7 @@ nib.save(nib.Nifti1Image(support, fod_image.affine), 'fsc_support.nii.gz')
 - **Frame.** Neighbour directions are computed in world coordinates from the image affine, so the SH coefficients must be defined in that same frame, as MRtrix3 does. The image must have a correct affine.
 - **Registration.** `labels_in_fod_space()` uses nearest-neighbour resampling and assumes the images are **already spatially registered**. It does not register images or reorient SH coefficients.
 - **Masks.** An optional `wm_mask` restricts graph voxels and an optional `exclusion_mask` removes voxels. The FOD-norm threshold is always applied in addition to `wm_mask`.
-- **ROIs.** ROI voxels must have positive labels, lie outside the selected WM voxel graph, and every ROI must have at least one FOD-supported WM contact, otherwise `add_roi_nodes()` raises an error. An optional `tissue_mask` excludes non-tissue ROI voxels.
+- **ROIs.** ROI voxels must have positive labels and lie outside the selected WM voxel graph. A supernode without any FOD-supported WM contact is kept, so FC indexing is unchanged, but carries no current. Function add_roi_nodes() lists all such labels in one warning, or raises with missing_contacts="raise". An optional `tissue_mask` excludes non-tissue ROI voxels.
 
 #### How the graph is built
 
