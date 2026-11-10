@@ -341,3 +341,45 @@ def test_touching_supernodes_have_no_direct_edge():
     is_supernode = np.zeros(graph.n_nodes, dtype=bool)
     is_supernode[parc.roi_nodes] = True
     assert not np.any(is_supernode[graph.edge_i] & is_supernode[graph.edge_j])
+
+
+def _tube_with_isolated_supernode():
+    """Tube phantom with supernodes 1 and 2 at its ends, plus supernode 3
+    as a single voxel far from any white matter."""
+    image, wm, labels = _tube_phantom((1, 0, 0))
+    labels[0, 0, 0] = 3
+    return image, wm, labels
+
+
+def test_supernode_without_contacts_warns_and_carries_no_current():
+    pytest.importorskip("nibabel")
+    pytest.importorskip("dipy")
+    from fsc.voxel import graph_from_fod, add_roi_nodes, sum_pairwise_support
+
+    image, wm, labels = _tube_with_isolated_supernode()
+    wm_graph, voxel = graph_from_fod(image, wm_mask=wm, fod_norm_threshold=0.0)
+
+    with pytest.warns(UserWarning, match=r"labels \[3\]"):
+        g3, p3 = add_roi_nodes(wm_graph, voxel, image, labels, roi_labels=[1, 2, 3])
+    g2, p2 = add_roi_nodes(wm_graph, voxel, image, labels, roi_labels=[1, 2])
+
+    # Every pair has FC 1; pairs with supernode 3 have no path and add nothing.
+    s3 = sum_pairwise_support(g3, voxel, p3, np.ones((3, 3)) - np.eye(3), solver="direct")
+    s2 = sum_pairwise_support(g2, voxel, p2, np.ones((2, 2)) - np.eye(2), solver="direct")
+    np.testing.assert_allclose(s3, s2, rtol=1e-10, atol=1e-14)
+
+
+def test_supernode_without_contacts_can_raise():
+    pytest.importorskip("nibabel")
+    pytest.importorskip("dipy")
+    from fsc.voxel import graph_from_fod, add_roi_nodes
+
+    image, wm, labels = _tube_with_isolated_supernode()
+    wm_graph, voxel = graph_from_fod(image, wm_mask=wm, fod_norm_threshold=0.0)
+
+    with pytest.raises(ValueError, match=r"labels \[3\]"):
+        add_roi_nodes(wm_graph, voxel, image, labels, roi_labels=[1, 2, 3],
+                      missing_contacts="raise")
+    with pytest.raises(ValueError, match="missing_contacts"):
+        add_roi_nodes(wm_graph, voxel, image, labels, roi_labels=[1, 2, 3],
+                      missing_contacts="ignore")
