@@ -1,10 +1,12 @@
 ## 2.1.0 (unreleased)
 
 > **Voxel results differ from the Aperture Neuro paper.** The paper's method
-> connected ROIs to white matter through face neighbours only and scaled edge
-> conductance by 1/ℓ (its Eq. 4). Version 2.1.0 changes both, see below. To
-> reproduce the published results, use fscpy 2.0.2 (`pip install fscpy==2.0.2`).
-> The white-matter graph itself (26 neighbours) is unchanged.
+> connected ROIs to white matter through face neighbours only, scaled edge
+> conductance by 1/ℓ (its Eq. 4), and kept every ROI in the graph for every FC
+> pair. Version 2.1.0 changes all three, see below. To reproduce the published
+> results, use fscpy 2.0.2 (`pip install fscpy==2.0.2`). The white-matter graph
+> itself (26 neighbours) is unchanged.
+
 
 ### Changed (affects results)
 - Voxel workflow: ROI supernodes now connect to white matter across all 26
@@ -16,6 +18,10 @@
   diagonals conducted 1.4–1.9× better than identical axis-aligned tracts.
   `length_power=1` restores the paper's distance scaling, but not its
   face-only ROI contacts.
+- Voxel workflow: each FC pair is now solved with only its own two ROIs in the
+  graph. Previously every ROI stayed connected, so unrelated ROIs acted as
+  perfect conductors between bundles. `ground_node` in `solve_fsc_voxel` is now ignored.
+
 
 ## 2.0.2
 
