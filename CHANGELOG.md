@@ -1,3 +1,19 @@
+## 2.1.1 (2026-11-10)
+
+Results are unchanged within the solver tolerance.
+
+### Added
+- Voxel solver: optional algebraic multigrid (AMG) preconditioning. With PyAMG
+  installed (`pip install "fscpy[amg]"`), `solve_fsc_voxel(..., solver="auto")`
+  uses CG with a smoothed-aggregation AMG preconditioner. On an HCP subject
+  (about 315,000 WM voxels) this cut CG iterations per pair from about 740 to
+  14–20 and the time per pair from about 7.5 s to about 4 s. Without PyAMG,
+  `"auto"` uses Jacobi-preconditioned CG as before; `solver="amg"` requires PyAMG.
+
+### Documentation
+- README: running chunks of FC pairs in parallel processes or batch jobs.
+
+
 ## 2.1.0 (2026-11-10)
 Archived on Zenodo: [doi:10.5281/zenodo.24104201](https://doi.org/10.5281/zenodo.24104201)
 

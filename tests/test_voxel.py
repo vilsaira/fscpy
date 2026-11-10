@@ -383,3 +383,41 @@ def test_supernode_without_contacts_can_raise():
     with pytest.raises(ValueError, match="missing_contacts"):
         add_roi_nodes(wm_graph, voxel, image, labels, roi_labels=[1, 2, 3],
                       missing_contacts="ignore")
+
+def test_amg_solver_matches_direct():
+    pytest.importorskip("pyamg")
+    graph, parcels = lattice_graph(30, 30, 1.0)
+    fc = np.array([[0.0, 0.7], [0.7, 0.0]])
+    amg = fsc.solve_fsc_voxel(graph, parcels, fc, solver="amg", rtol=1e-10)
+    direct = fsc.solve_fsc_voxel(graph, parcels, fc, solver="direct")
+    np.testing.assert_allclose(amg, direct, rtol=1e-6, atol=1e-9 * direct.max())
+
+
+def test_auto_solver_uses_amg_when_available(monkeypatch):
+    pyamg = pytest.importorskip("pyamg")
+    calls = []
+    original = pyamg.smoothed_aggregation_solver
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(pyamg, "smoothed_aggregation_solver", counting)
+    graph, parcels = lattice_graph(10, 10, 1.0)
+    fc = np.array([[0.0, 1.0], [1.0, 0.0]])
+    fsc.solve_fsc_voxel(graph, parcels, fc)              # default solver="auto"
+    assert calls, "solver='auto' did not use AMG although pyamg is installed"
+
+
+def test_auto_solver_without_pyamg(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "pyamg", None)      # makes "import pyamg" fail
+    graph, parcels = lattice_graph(10, 10, 1.0)
+    fc = np.array([[0.0, 1.0], [1.0, 0.0]])
+
+    auto = fsc.solve_fsc_voxel(graph, parcels, fc, rtol=1e-10)
+    direct = fsc.solve_fsc_voxel(graph, parcels, fc, solver="direct")
+    np.testing.assert_allclose(auto, direct, rtol=1e-6, atol=1e-9 * direct.max())
+
+    with pytest.raises(ImportError, match="pyamg"):
+        fsc.solve_fsc_voxel(graph, parcels, fc, solver="amg")

@@ -155,7 +155,53 @@ nib.save(nib.Nifti1Image(support, fod_image.affine), 'fsc_support.nii.gz')
 
 The voxel workflow solves each finite, positive FC pair separately. For a pair of ROIs (a, b), the graph consists of the white-matter voxels and the contacts of ROIs a and b only. ROI b is grounded, unit current is injected at ROI a, and the solution is scaled so that the potential difference equals the FC value. Absolute structural currents are accumulated over pairs. Pairs without a structural path contribute zero. Specify `pairs=[(0, 1)]` to select one pair by zero-based FC matrix indices.
 
-`solver` can be `auto`, `cg` or `direct`. The default rtol is 1e-4. Each solution is checked for current conservation, and the check is relative to the injected current, so it does not depend on the scale of the conductances. Each FC pair needs one linear solve. Run time grows linearly with the number of pairs. 
+`solver` can be `auto` (default), `amg`, `cg` or `direct`. With `auto` CG uses an algebraic multigrid (AMG) preconditioner when [PyAMG](https://github.com/pyamg/pyamg) is installed (`pip install pyamg`, or the `amg` extra) and a Jacobi preconditioner otherwise. `amg` requires PyAMG. On a whole-brain HCP graph (about 315,000 WM voxels) AMG reduced the time per pair from about 7.5 s to about 4 s. The default `rtol` is `1e-4`. Each solution is checked for current conservation, and the check is relative to the injected current, so it does not depend on the scale of the conductances. Each FC pair needs one linear solve, so run time grows linearly with the number of pairs.
+
+#### Running pairs in parallel
+
+FC pairs are solved independently, and the edge currents of disjoint sets of pairs add up to the result for all pairs (equal within the solver tolerance; separate runs can differ in the last digits). A large analysis can therefore be split into chunks of pairs, solved in separate processes or batch jobs, and summed:
+
+```python
+from concurrent.futures import ProcessPoolExecutor
+
+import numpy as np
+import fsc
+from fsc.voxel import voxel_support
+
+_shared = {}
+
+def _init(graph, parcellation, fc):
+    _shared.update(graph=graph, parcellation=parcellation, fc=fc)
+
+def _solve_chunk(chunk):
+    return fsc.solve_fsc_voxel(
+        _shared["graph"], _shared["parcellation"], _shared["fc"], pairs=chunk
+    )
+
+if __name__ == "__main__":
+    # graph, voxel_mapping, parcellation and fc as in the voxel workflow above
+    pairs, _ = fsc.fc_pairs(fc)               # all finite, positive FC pairs
+    chunks = np.array_split(pairs, 32)
+    with ProcessPoolExecutor(max_workers=8, initializer=_init,
+                             initargs=(graph, parcellation, fc)) as pool:
+        edge_currents = sum(pool.map(_solve_chunk, chunks))
+    support = voxel_support(graph, voxel_mapping, edge_currents)
+```
+
+The `if __name__ == "__main__":` guard is required on Windows and macOS. Each worker holds its own copy of the graph, so memory use grows with `max_workers`. Each worker holds its own copy of the graph, so memory use grows with max_workers. On a single workstation the gain is limited by memory bandwidth rather than core count. On an 8-thread desktop, 4 and 8 workers both gave about a 2× speed-up. Batch jobs on separate cluster nodes do not share memory bandwidth and scale better.
+
+The same logic works with batch systems such as Slurm job arrays: each task solves one chunk and saves its edge currents, and a final step sums them.
+
+```python
+k = int(os.environ["SLURM_ARRAY_TASK_ID"])
+chunk = np.array_split(pairs, n_tasks)[k]
+np.save(f"edge_currents_{k}.npy",
+        fsc.solve_fsc_voxel(graph, parcellation, fc, pairs=chunk))
+# afterwards: edge_currents = sum(np.load(f) for f in files)
+```
+
+Every task must build the graph from the same inputs and settings, so that edge order and pair indices agree.
+
 
 ## Numerical interpretation
 
