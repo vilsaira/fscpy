@@ -1,11 +1,10 @@
 ## 2.1.0 (2026-11-10)
+Archived on Zenodo: [doi:10.5281/zenodo.VERSION](https://doi.org/10.5281/zenodo.VERSION)
 
 > **Voxel results differ from the Aperture Neuro paper.** The paper's method
 > connected ROIs to white matter through face neighbours only, scaled edge
 > conductance by 1/ℓ (its Eq. 4), and kept every ROI in the graph for every FC
-> pair. Version 2.1.0 changes all three, see below. To reproduce the published
-> results, use fscpy 2.0.2 (`pip install fscpy==2.0.2`). The white-matter graph
-> itself (26 neighbours) is unchanged.
+> pair. Version 2.1.0 changes all three, see below.
 
 
 ### Changed (affects results)

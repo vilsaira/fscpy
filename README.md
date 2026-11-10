@@ -1,4 +1,6 @@
 # fscpy
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.CONCEPT.svg)](https://doi.org/10.5281/zenodo.CONCEPT)
+
 
 **Function–structure coupling (FSC)** maps functional correlations onto the structural connections that can support them. FSC represents structural connectivity as weighted graph conductances, imposes functional connectivity as potential differences, and measures the resulting currents on structural edges.
 
@@ -185,6 +187,10 @@ The two FSC workflows are described in the following papers:
 - **Voxel workflow:** Sairanen, V. *Voxel-wise function-structure coupling with diffusion-weighted and functional MRI*. **Aperture Neuro** (2026). [doi:10.52294/001c.172225](https://doi.org/10.52294/001c.172225).
 
 Please, cite the publication corresponding to the workflow used.
+
+- **Software:** Sairanen, V. *fscpy: Function-structure coupling*. Zenodo. [doi:10.5281/zenodo.CONCEPT](https://doi.org/10.5281/zenodo.CONCEPT). Cite the version DOI shown on Zenodo for the release you used.
+
+
 
 ## License
 
