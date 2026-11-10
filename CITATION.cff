@@ -3,7 +3,7 @@ message: "Cite the publication corresponding to the FSC workflow used."
 title: "fscpy: Function-structure coupling"
 type: software
 version: 2.1.0
-doi: 10.5281/zenodo.CONCEPT
+doi: 10.5281/zenodo.24104200
 authors:
   - family-names: Sairanen
     given-names: Viljami
