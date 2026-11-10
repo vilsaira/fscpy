@@ -295,6 +295,8 @@ def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
     the potential difference equals the FC value. Absolute edge currents
     are summed over pairs. Pairs without a structural path contribute zero.
 
+    solver is "auto" (default), "amg", "cg" or "direct". "auto" uses CG with an algebraic multigrid preconditioner when pyamg is installed, and CG with a Jacobi preconditioner otherwise. "amg" requires pyamg. All iterative solvers stop at relative tolerance rtol.
+
     ground_node is ignored; it is kept so that existing calls still work.
     """
     fc = np.asarray(fc, dtype=float)
@@ -304,8 +306,21 @@ def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
 
     if fc.shape != (n_rois, n_rois):
         raise ValueError("FC and parcellation dimensions differ.")
-    if solver not in ("auto", "cg", "direct"):
+    if solver not in ("auto", "cg", "amg", "direct"):
         raise ValueError(f"Unknown voxel solver: {solver}")
+
+    # AMG-preconditioned CG when pyamg is installed, Jacobi CG otherwise.
+    pyamg = None
+    if solver in ("auto", "amg"):
+        try:
+            import pyamg
+        except ImportError:
+            if solver == "amg":
+                raise ImportError(
+                    "solver='amg' requires pyamg: pip install pyamg"
+                ) from None
+        solver = "amg" if pyamg is not None else "cg"
+
 
     if pairs is None:
         pairs, values = fc_pairs(fc)
@@ -365,10 +380,15 @@ def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
         if solver == "direct":
             solution = spsolve(matrix.tocsc(), rhs[keep])
         else:
-            diagonal = matrix.diagonal()
-            preconditioner = LinearOperator(
-                matrix.shape, matvec=lambda x: x / diagonal, dtype=float
-            )
+            if solver == "amg":
+                preconditioner = pyamg.smoothed_aggregation_solver(
+                    matrix
+                ).aspreconditioner()
+            else:
+                diagonal = matrix.diagonal()
+                preconditioner = LinearOperator(
+                    matrix.shape, matvec=lambda x: x / diagonal, dtype=float
+                )
             solution, status = cg(
                 matrix, rhs[keep], M=preconditioner, rtol=rtol, maxiter=maxiter
             )
