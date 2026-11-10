@@ -188,7 +188,7 @@ The two FSC workflows are described in the following papers:
 
 Please, cite the publication corresponding to the workflow used.
 
-- **Software:** Sairanen, V. *fscpy: Function-structure coupling*. Zenodo. [doi:10.5281/zenodo.CONCEPT](https://doi.org/10.5281/zenodo.CONCEPT). Cite the version DOI shown on Zenodo for the release you used.
+- **Software:** Sairanen, V. *fscpy: Function-structure coupling*. Zenodo. [doi:10.5281/zenodo.24104200](https://doi.org/10.5281/zenodo.24104200). Cite the version DOI shown on Zenodo for the release you used.
 
 
 
