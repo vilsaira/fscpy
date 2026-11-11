@@ -1,4 +1,5 @@
 ## 2.1.2 (2026-11-11)
+Archived on Zenodo: [doi:10.5281/zenodo.24127642](https://doi.org/10.5281/zenodo.24127642)
 
 Same code as 2.1.1. The 2.1.1 release was tagged with version 2.1.0 in
 `pyproject.toml` and `CITATION.cff`, so it could not be published on PyPI.
