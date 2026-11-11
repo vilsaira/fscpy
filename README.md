@@ -11,6 +11,9 @@ The Python package is imported as `fsc` and provides two workflows:
 
 These workflows use different structural graphs, so their numerical outputs are **not interchangeable**.
 
+Step-by-step examples, including preparing inputs are available in the
+[fscpy wiki](https://github.com/vilsaira/fscpy/wiki).
+
 ## Installation
 
 From the repository directory, preferably in a virtual environment:
