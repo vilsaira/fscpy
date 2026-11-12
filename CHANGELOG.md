@@ -1,3 +1,13 @@
+## 2.2.0 (unreleased)
+
+### Added
+- `spectral_from_parcellations()`: decomposes parcellation FSC solutions (pairwise or
+  joint) into structural Laplacian eigenmodes, giving modal coefficients and energies
+  per FC pair and the captured-energy fraction for truncated bases. The shared
+  functions `fsc.spectral.laplacian_modes()` and `decompose()` are also available.
+
+Results of existing functions are unchanged.
+
 ## 2.1.2 (2026-11-11)
 Archived on Zenodo: [doi:10.5281/zenodo.24127642](https://doi.org/10.5281/zenodo.24127642)
 

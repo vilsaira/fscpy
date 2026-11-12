@@ -98,6 +98,32 @@ np.savetxt("fsc_streamline_weights.txt", values)        # one value per streamli
 
 The support of each parcel pair is split among the streamlines connecting that pair in proportion to their weights. So the values of each pair's streamlines sum to `support[a, b]`. This holds for both methods and for SC from any source or normalisation. Only the relative weights within a pair matter.
 
+#### Spectral decomposition
+
+`spectral_from_parcellations()` expresses FSC solutions in the eigenmodes of the
+structural Laplacian, `L v_k = λ_k v_k` (connectome harmonics). For each FC pair it
+returns the modal coefficients `c_k = v_kᵀ φ` and modal energies `E_k = λ_k c_k²`.
+The energies sum to the energy dissipated in the structural edges, `FC² / R` for a
+pair with effective resistance `R` so they show which structural modes a functional
+relationship uses.
+
+```python
+spec = fsc.spectral_from_parcellations(sc, fc)    # all positive FC pairs
+spec.eigenvalues     # structural spatial frequencies, ascending
+spec.pairs           # (n_pairs, 2) FC pairs with a structural path
+spec.energy          # (n_pairs, n_modes) modal energy per pair
+spec.energy.sum(0)   # modal energy summed over all pairs
+```
+
+`method="joint"` decomposes the single joint solution instead. `n_modes` keeps only the
+lowest modes. `spec.captured` then gives the share of each solution's energy they
+hold. The decomposition uses a dense eigendecomposition and is intended for
+parcellation-sized graphs.
+
+The spectra describe each solution's signed currents. The FSC support matrix sums
+absolute currents over pairs, so it is not a combination of modes. Modal energy summed
+over pairs is the spectral counterpart of the total load.
+
 Requirements:
 
 - **Assignments:** exactly two labels per streamline, numbered from 1 in SC matrix order, with 0 for an unassigned endpoint. This is the default `tck2connectome -out_assignments` format. Options that write more labels per streamline (e.g. `-assignment_all_voxels`), or that add a row for node 0 to the matrix (`-keep_unassigned`) break this correspondence!
@@ -225,7 +251,7 @@ Run the small deterministic tests without downloading neuroimaging datasets:
 python -m pytest -q
 ```
 
-The tests cover the five-node analytical solution, general MNA, the joint parcellation method and its rejection of FC with cycles, mapping support to streamlines, negative FC, empty FC, ROI-basis accumulation, disconnected ROIs, ROI contacts for oblique tracts, equal conduction along axis and diagonal tracts, WM-only voxel support, and the scale-invariance of the solver's convergence check. Optional tests run when NiBabel and DIPY are installed: a synthetic-FOD end-to-end example, and a check that the default SH basis reproduces amplitudes computed by MRtrix3 (`sh2amp`) from a reference FiberCup FOD stored in `tests/data/`.
+The tests cover the five-node analytical solution, general MNA, the joint parcellation method and its rejection of FC with cycles, mapping support to streamlines, negative FC, empty FC, ROI-basis accumulation, disconnected ROIs, ROI contacts for oblique tracts, equal conduction along axis and diagonal tracts, WM-only voxel support, the scale-invariance of the solver's convergence check, spectral decomposition (exact reconstruction, energy balance, truncated bases). Optional tests run when NiBabel and DIPY are installed: a synthetic-FOD end-to-end example, and a check that the default SH basis reproduces amplitudes computed by MRtrix3 (`sh2amp`) from a reference FiberCup FOD stored in `tests/data/`.
 
 ## Research
 
