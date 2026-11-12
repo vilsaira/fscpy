@@ -1,4 +1,4 @@
-## 2.2.0 (unreleased)
+## 2.2.0 (2026-11-12)
 
 ### Added
 - `spectral_from_parcellations()`: decomposes parcellation FSC solutions (pairwise or
