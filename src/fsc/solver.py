@@ -284,20 +284,17 @@ def solve_fsc(structural_graph, functional_connectivity, *, ground_node=0,
     )
 
 
-def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
-                    ground_node=0, solver="auto", rtol=1e-4, maxiter=None):
-    """Compute voxelwise FSC by solving each FC pair separately.
+def _voxel_pair_solutions(structural_graph, parcellation, fc, pairs=None, *,
+                          solver="auto", rtol=1e-4, maxiter=None):
+    """Solve the FC pairs of the voxel workflow one at a time.
 
-    For a pair of ROIs (a, b), only the white-matter graph and the contact
-    edges of ROIs a and b take part. All other ROIs are left out, so no
-    ROI supernode can carry current between bundles. ROI b is grounded,
-    unit current is injected at ROI a, and the solution is scaled so that
-    the potential difference equals the FC value. Absolute edge currents
-    are summed over pairs. Pairs without a structural path contribute zero.
-
-    solver is "auto" (default), "amg", "cg" or "direct". "auto" uses CG with an algebraic multigrid preconditioner when pyamg is installed, and CG with a Jacobi preconditioner otherwise. "amg" requires pyamg. All iterative solvers stop at relative tolerance rtol.
-
-    ground_node is ignored; it is kept so that existing calls still work.
+    Yields (a, b, value, resistance, potentials, active) for every finite,
+    positive FC pair with a structural path. For a pair of ROIs (a, b), only
+    the white-matter graph and the contact edges of ROIs a and b take part.
+    potentials are scaled so that the potential difference between the two
+    supernodes equals the FC value (ROI b is at zero); active marks the edges
+    present in this pair's graph. Shared by solve_fsc_voxel() and the
+    spectral analysis.
     """
     fc = np.asarray(fc, dtype=float)
     roi_nodes = np.asarray(parcellation.roi_nodes)
@@ -321,7 +318,6 @@ def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
                 ) from None
         solver = "amg" if pyamg is not None else "cg"
 
-
     if pairs is None:
         pairs, values = fc_pairs(fc)
     else:
@@ -334,13 +330,12 @@ def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
     valid = np.isfinite(values) & (values > 0) & (pairs[:, 0] != pairs[:, 1])
     pairs, values = pairs[valid], values[valid]
 
+    if len(pairs) == 0:
+        return
+
     edge_i = structural_graph.edge_i
     edge_j = structural_graph.edge_j
     conductance = structural_graph.conductance
-    edge_currents = np.zeros(len(edge_i))
-
-    if len(pairs) == 0:
-        return edge_currents
 
     # Each edge touching a supernode is a contact of that ROI; all other
     # edges belong to the white-matter graph and are used for every pair.
@@ -421,10 +416,38 @@ def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
 
         # Edges of other ROIs are not part of this pair's graph.
         active = (edge_roi < 0) | (edge_roi == a) | (edge_roi == b)
+        yield a, b, value, resistance, potentials, active
+
+
+def solve_fsc_voxel(structural_graph, parcellation, fc, pairs=None, *,
+                    ground_node=0, solver="auto", rtol=1e-4, maxiter=None):
+    """Compute voxelwise FSC by solving each FC pair separately.
+
+    For a pair of ROIs (a, b), only the white-matter graph and the contact
+    edges of ROIs a and b take part. All other ROIs are left out, so no
+    ROI supernode can carry current between bundles. ROI b is grounded,
+    unit current is injected at ROI a, and the solution is scaled so that
+    the potential difference equals the FC value. Absolute edge currents
+    are summed over pairs. Pairs without a structural path contribute zero.
+
+    solver is "auto" (default), "amg", "cg" or "direct". "auto" uses CG with an algebraic multigrid preconditioner when pyamg is installed, and CG with a Jacobi preconditioner otherwise. "amg" requires pyamg. All iterative solvers stop at relative tolerance rtol.
+
+    ground_node is ignored. It is kept so that existing calls still work.
+    """
+    edge_i = structural_graph.edge_i
+    edge_j = structural_graph.edge_j
+    conductance = structural_graph.conductance
+    edge_currents = np.zeros(len(edge_i))
+
+    for _, _, _, _, potentials, active in _voxel_pair_solutions(
+        structural_graph, parcellation, fc, pairs,
+        solver=solver, rtol=rtol, maxiter=maxiter,
+    ):
         currents = np.where(
             active, conductance * (potentials[edge_i] - potentials[edge_j]), 0.0
         )
         edge_currents += np.abs(currents)
 
     return edge_currents
+
 
