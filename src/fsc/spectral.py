@@ -277,7 +277,8 @@ def spectral_fsc_voxel(graph, parcellation, fc, modes, pairs=None, *,
         rows["energy"].append(energy)
         rows["captured"].append(energy.sum() / main_energy)
         rows["contact_share"].append((total - wm_energy) / total)
-        rows["other_share"].append((wm_energy - main_energy) / total)
+        rows["other_share"].append(max(wm_energy - main_energy, 0.0) / total)
+
 
     n_modes = len(modes.eigenvalues)
     return VoxelSpectralResult(
