@@ -1,4 +1,5 @@
 ## 2.2.0 (2026-11-12)
+Archived on Zenodo: [doi:10.5281/zenodo.24159630](https://doi.org/10.5281/zenodo.24159630)
 
 ### Added
 - `spectral_from_parcellations()`: decomposes parcellation FSC solutions (pairwise or
