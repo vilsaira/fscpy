@@ -5,6 +5,17 @@
   joint) into structural Laplacian eigenmodes, giving modal coefficients and energies
   per FC pair and the captured-energy fraction for truncated bases. The shared
   functions `fsc.spectral.laplacian_modes()` and `decompose()` are also available.
+- `voxel_modes()` and `spectral_fsc_voxel()`: spectral decomposition of voxel FSC. The
+  modes come from the white-matter graph alone (largest connected component), so one
+  basis serves all FC pairs. A full dense basis for small graphs, or the lowest modes via
+  LOBPCG with an AMG preconditioner (requires PyAMG) with a per-mode residual. Each pair
+  is solved as in `solve_fsc_voxel()`. The result reports modal energies, the captured
+  energy fraction, the effective resistance, and the energy shares of supernode contacts
+  and of white matter outside the main component.
+
+### Changed
+- `solve_fsc_voxel()` now shares its per-pair loop with the spectral analysis. Its
+  results are unchanged.
 
 Results of existing functions are unchanged.
 

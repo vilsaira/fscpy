@@ -186,6 +186,36 @@ The voxel workflow solves each finite, positive FC pair separately. For a pair o
 
 `solver` can be `auto` (default), `amg`, `cg` or `direct`. With `auto` CG uses an algebraic multigrid (AMG) preconditioner when [PyAMG](https://github.com/pyamg/pyamg) is installed (`pip install pyamg`, or the `amg` extra) and a Jacobi preconditioner otherwise. `amg` requires PyAMG. On a whole-brain HCP graph (about 315,000 WM voxels) AMG reduced the time per pair from about 7.5 s to about 4 s. The default `rtol` is `1e-4`. Each solution is checked for current conservation, and the check is relative to the injected current, so it does not depend on the scale of the conductances. Each FC pair needs one linear solve, so run time grows linearly with the number of pairs.
 
+#### Spectral decomposition
+
+`voxel_modes()` computes eigenmodes of the white-matter graph from WM edges only, on its
+largest connected component, so one basis serves all FC pairs and is not affected by the
+supernodes. `spectral_fsc_voxel()` solves each pair exactly as `solve_fsc_voxel()` does
+and projects the white-matter part of its potentials onto these modes.
+
+```python
+modes = fsc.voxel_modes(graph, parcellation, n_modes=100)        # requires PyAMG
+spec = fsc.spectral_fsc_voxel(graph, parcellation, fc, modes, pairs=pairs)
+spec.energy          # (n_pairs, n_modes) modal energy per FC pair
+spec.captured        # share of each pair's white-matter energy held by the computed modes
+spec.contact_share   # share of each pair's energy dissipated in supernode contacts
+spec.resistance      # effective resistance between the two supernodes
+```
+
+A whole-brain voxel graph has hundreds of thousands of modes, so only the lowest are
+computed, with LOBPCG and an algebraic multigrid preconditioner. For an HCP subject
+(about 315,000 WM voxels) 100 modes took about 7 minutes, computed once per subject.
+`modes.residuals` gives the relative accuracy of every mode, and a warning is issued if
+any has not converged.
+
+`captured` shows how much of a pair's solution the computed modes represent, and it
+depends strongly on the pair. In one HCP subject the lowest 100 modes held about 60–65%
+of the white-matter energy of interhemispheric homotopic pairs, but under 10% for
+neighbouring parcels, whose currents are dominated by local spreading near their
+contacts. A third of the neighbouring pair's energy was dissipated in the contacts
+themselves, against under 10% for the long-range pairs.
+
+
 #### Running pairs in parallel
 
 FC pairs are solved independently, and the edge currents of disjoint sets of pairs add up to the result for all pairs (equal within the solver tolerance; separate runs can differ in the last digits). A large analysis can therefore be split into chunks of pairs, solved in separate processes or batch jobs, and summed:
@@ -251,7 +281,7 @@ Run the small deterministic tests without downloading neuroimaging datasets:
 python -m pytest -q
 ```
 
-The tests cover the five-node analytical solution, general MNA, the joint parcellation method and its rejection of FC with cycles, mapping support to streamlines, negative FC, empty FC, ROI-basis accumulation, disconnected ROIs, ROI contacts for oblique tracts, equal conduction along axis and diagonal tracts, WM-only voxel support, the scale-invariance of the solver's convergence check, spectral decomposition (exact reconstruction, energy balance, truncated bases). Optional tests run when NiBabel and DIPY are installed: a synthetic-FOD end-to-end example, and a check that the default SH basis reproduces amplitudes computed by MRtrix3 (`sh2amp`) from a reference FiberCup FOD stored in `tests/data/`.
+The tests cover the five-node analytical solution, general MNA, the joint parcellation method and its rejection of FC with cycles, mapping support to streamlines, negative FC, empty FC, ROI-basis accumulation, disconnected ROIs, ROI contacts for oblique tracts, equal conduction along axis and diagonal tracts, WM-only voxel support, the scale-invariance of the solver's convergence check, spectral decomposition (exact reconstruction, energy balance, truncated bases), voxel spectral decomposition (energy balance, isolation from unrelated supernodes, LOBPCG modes). Optional tests run when NiBabel and DIPY are installed: a synthetic-FOD end-to-end example, and a check that the default SH basis reproduces amplitudes computed by MRtrix3 (`sh2amp`) from a reference FiberCup FOD stored in `tests/data/`.
 
 ## Research
 
