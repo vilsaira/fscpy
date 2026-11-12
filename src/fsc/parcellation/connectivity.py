@@ -99,8 +99,12 @@ def _independent_cycles(pairs, n_nodes):
     n_components, _ = connected_components(adjacency, directed=False)
     return len(pairs) - (n_nodes - n_components)
 
-def _solve_joint(sc, fc, *, solver="auto"):
-    """Solve all FC constraints jointly (NetN Eq. 11) for cycle-free FC pairs only. Subnetworks with cycles are not solved!"""
+def _joint_solution(sc, fc, solver="auto"):
+    """Solve all FC constraints jointly (NetN Eq. 11) for cycle-free FC pairs.
+
+    Returns the structural graph and the FSCResult. Raises ValueError if the
+    FC pairs contain any cycle.
+    """
     graph = graph_from_sc(sc)
 
     if np.shape(fc) != (graph.n_nodes, graph.n_nodes):
@@ -119,8 +123,14 @@ def _solve_joint(sc, fc, *, solver="auto"):
     constraints = fsc.functional_connectivity_from_fc_pairs(
         pairs, values, graph.n_nodes
     )
-    result = fsc.solve_fsc(graph, constraints, solver=solver)
+    return graph, fsc.solve_fsc(graph, constraints, solver=solver)
+
+
+def _solve_joint(sc, fc, *, solver="auto"):
+    """Joint FSC support matrix (absolute edge currents)."""
+    graph, result = _joint_solution(sc, fc, solver)
     return edge_currents_to_matrix(graph, result.edge_currents, absolute=True)
+
 
 def edge_currents_to_matrix(graph, edge_currents, absolute=False):
     """Convert graph edge currents to an N-by-N connectivity matrix."""
