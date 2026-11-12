@@ -5,6 +5,7 @@ import pytest
 
 import fsc
 from fsc.spectral import decompose, laplacian_modes
+from fsc.voxel import ParcellationMapping
 
 
 def five_node():
@@ -133,3 +134,120 @@ def test_joint_spectrum_rejects_cycles():
     sc, fc = random_network()
     with pytest.raises(ValueError, match="cycle"):
         fsc.spectral_from_parcellations(sc, fc, method="joint")
+
+def lattice_with_supernodes(nx=6, ny=5, extra=False, seed=0):
+    """WM lattice with random conductances. Supernode A touches the left
+    column, B the right column; with extra=True, C touches the bottom row and
+    D the top row. A and B are identical with and without C and D."""
+    rng = np.random.default_rng(seed)
+    idx = np.arange(nx * ny).reshape(nx, ny)
+    wm_i = np.r_[idx[:-1, :].ravel(), idx[:, :-1].ravel()]
+    wm_j = np.r_[idx[1:, :].ravel(), idx[:, 1:].ravel()]
+    wm_g = rng.uniform(0.5, 2.0, len(wm_i))
+
+    n_wm = nx * ny
+    contacts = [idx[0, :], idx[-1, :]]
+    if extra:
+        contacts += [idx[:, 0], idx[:, -1]]
+    roi_nodes = n_wm + np.arange(len(contacts))
+    c_i = np.concatenate([np.full(len(c), r) for c, r in zip(contacts, roi_nodes)])
+    c_j = np.concatenate(contacts)
+    c_g = 1.0 + 0.5 * (c_j % 3)                          # deterministic contact strengths
+
+    graph = fsc.WeightedGraph(n_wm + len(contacts), np.r_[wm_i, c_i],
+                              np.r_[wm_j, c_j], np.r_[wm_g, c_g])
+    parcellation = ParcellationMapping(
+        roi_labels=np.arange(1, len(contacts) + 1),
+        roi_nodes=roi_nodes,
+        interface_edge_indices=np.arange(len(wm_i), len(wm_i) + len(c_i)),
+        contact_voxel_indices=np.arange(len(c_i)),
+    )
+    return graph, parcellation
+
+
+def pair_resistance(graph, a_node, b_node, excluded_nodes=()):
+    """Effective resistance between two supernodes, other supernodes removed."""
+    keep = ~(np.isin(graph.edge_i, excluded_nodes) | np.isin(graph.edge_j, excluded_nodes))
+    lap = fsc.WeightedGraph(graph.n_nodes, graph.edge_i[keep], graph.edge_j[keep],
+                            graph.conductance[keep]).laplacian().toarray()
+    a = np.zeros(graph.n_nodes)
+    a[a_node], a[b_node] = 1.0, -1.0
+    return a @ np.linalg.pinv(lap) @ a
+
+
+def test_voxel_modes_full_basis():
+    from fsc.spectral import voxel_modes
+    graph, parcellation = lattice_with_supernodes()
+    modes = voxel_modes(graph, parcellation)
+
+    n_wm = 6 * 5
+    wm = (graph.edge_i < n_wm) & (graph.edge_j < n_wm)
+    lap = fsc.WeightedGraph(n_wm, graph.edge_i[wm], graph.edge_j[wm],
+                            graph.conductance[wm]).laplacian().toarray()
+    expected = np.linalg.eigvalsh(lap)[1:]               # connected lattice: one zero mode
+    np.testing.assert_allclose(modes.eigenvalues, expected, rtol=1e-10)
+    assert modes.eigenvectors.shape == (n_wm, n_wm - 1)
+
+
+def test_voxel_energy_balance():
+    from fsc.spectral import spectral_fsc_voxel, voxel_modes
+    graph, parcellation = lattice_with_supernodes()
+    fc = np.array([[0.0, 0.7], [0.7, 0.0]])
+    spec = spectral_fsc_voxel(graph, parcellation, fc, voxel_modes(graph, parcellation),
+                              solver="direct")
+
+    a, b = parcellation.roi_nodes
+    resistance = pair_resistance(graph, a, b)
+    np.testing.assert_allclose(spec.resistance, [resistance], rtol=1e-10)
+
+    total = 0.7 ** 2 / resistance
+    wm_main = total * (1 - spec.contact_share - spec.other_share)
+    np.testing.assert_allclose(spec.energy.sum(axis=1), wm_main, rtol=1e-8)
+    np.testing.assert_allclose(spec.captured, 1.0, rtol=1e-8)   # full basis
+    assert 0 < spec.contact_share[0] < 1
+    assert spec.other_share[0] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_voxel_fc_scaling():
+    from fsc.spectral import spectral_fsc_voxel, voxel_modes
+    graph, parcellation = lattice_with_supernodes()
+    modes = voxel_modes(graph, parcellation)
+    fc = np.array([[0.0, 0.7], [0.7, 0.0]])
+    base = spectral_fsc_voxel(graph, parcellation, fc, modes, solver="direct")
+    scaled = spectral_fsc_voxel(graph, parcellation, 3 * fc, modes, solver="direct")
+    np.testing.assert_allclose(scaled.energy, 9 * base.energy, rtol=1e-8, atol=1e-14)
+    np.testing.assert_allclose(scaled.captured, base.captured, rtol=1e-8)
+    np.testing.assert_allclose(scaled.contact_share, base.contact_share, rtol=1e-8)
+
+
+def test_voxel_spectra_ignore_unrelated_supernodes():
+    from fsc.spectral import spectral_fsc_voxel, voxel_modes
+    g2, p2 = lattice_with_supernodes()
+    g4, p4 = lattice_with_supernodes(extra=True)
+    fc2 = np.array([[0.0, 0.7], [0.7, 0.0]])
+    fc4 = np.zeros((4, 4))
+    fc4[0, 1] = fc4[1, 0] = 0.7
+
+    s2 = spectral_fsc_voxel(g2, p2, fc2, voxel_modes(g2, p2), solver="direct")
+    s4 = spectral_fsc_voxel(g4, p4, fc4, voxel_modes(g4, p4), solver="direct")
+    np.testing.assert_allclose(s4.resistance, s2.resistance, rtol=1e-10)
+    np.testing.assert_allclose(s4.energy, s2.energy, rtol=1e-8, atol=1e-14)
+    np.testing.assert_allclose(s4.contact_share, s2.contact_share, rtol=1e-8)
+
+
+def test_voxel_partial_modes_with_lobpcg():
+    pytest.importorskip("pyamg")
+    from fsc.spectral import spectral_fsc_voxel, voxel_modes
+    graph, parcellation = lattice_with_supernodes(nx=30, ny=30)
+    full = voxel_modes(graph, parcellation)
+    part = voxel_modes(graph, parcellation, n_modes=10)
+
+    np.testing.assert_allclose(part.eigenvalues, full.eigenvalues[:10], rtol=1e-4)
+    assert part.residuals.max() < 1e-2
+
+    fc = np.array([[0.0, 0.7], [0.7, 0.0]])
+    s_full = spectral_fsc_voxel(graph, parcellation, fc, full, solver="direct")
+    s_part = spectral_fsc_voxel(graph, parcellation, fc, part, solver="direct")
+    expected = s_full.energy[:, :10].sum(axis=1) / s_full.energy.sum(axis=1)
+    np.testing.assert_allclose(s_part.captured, expected, rtol=1e-3)
+    assert np.all(s_part.captured < 1)
