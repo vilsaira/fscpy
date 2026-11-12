@@ -98,6 +98,36 @@ np.savetxt("fsc_streamline_weights.txt", values)        # one value per streamli
 
 The support of each parcel pair is split among the streamlines connecting that pair in proportion to their weights. So the values of each pair's streamlines sum to `support[a, b]`. This holds for both methods and for SC from any source or normalisation. Only the relative weights within a pair matter.
 
+#### Spectral decomposition
+
+`spectral_from_parcellations()` expresses FSC solutions in the eigenmodes of the
+structural Laplacian, `L v_k = λ_k v_k` (connectome harmonics). For each FC pair it
+returns the modal coefficients `c_k = v_kᵀ φ` and modal energies `E_k = λ_k c_k²`.
+The energies sum to the energy dissipated in the structural edges, `FC² / R` for a
+pair with effective resistance `R` so they show which structural modes a functional
+relationship uses.
+
+```python
+spec = fsc.spectral_from_parcellations(sc, fc)    # all positive FC pairs
+spec.eigenvalues     # structural spatial frequencies, ascending
+spec.pairs           # (n_pairs, 2) FC pairs with a structural path
+spec.energy          # (n_pairs, n_modes) modal energy per pair
+spec.energy.sum(0)   # modal energy summed over all pairs
+```
+
+`method="joint"` decomposes the single joint solution instead. `n_modes` keeps only the
+lowest modes. `spec.captured` then gives the share of each solution's energy they
+hold. The decomposition uses a dense eigendecomposition and is intended for
+parcellation-sized graphs.
+
+`captured` shows how much of a pair's solution the computed modes represent, and it
+depends strongly on the pair. In one HCP subject (the 50 strongest Default-network
+pairs), the lowest 100 modes held a median of 44% of the white-matter energy for
+interhemispheric pairs and 22% for pairs within a hemisphere, and the captured fraction
+correlated with the pairs' effective resistance (r = 0.77). Short-range pairs are
+dominated by local current spreading near their supernode contacts, which also
+dissipate a larger share of their energy.
+
 Requirements:
 
 - **Assignments:** exactly two labels per streamline, numbered from 1 in SC matrix order, with 0 for an unassigned endpoint. This is the default `tck2connectome -out_assignments` format. Options that write more labels per streamline (e.g. `-assignment_all_voxels`), or that add a row for node 0 to the matrix (`-keep_unassigned`) break this correspondence!
@@ -159,6 +189,36 @@ nib.save(nib.Nifti1Image(support, fod_image.affine), 'fsc_support.nii.gz')
 The voxel workflow solves each finite, positive FC pair separately. For a pair of ROIs (a, b), the graph consists of the white-matter voxels and the contacts of ROIs a and b only. ROI b is grounded, unit current is injected at ROI a, and the solution is scaled so that the potential difference equals the FC value. Absolute structural currents are accumulated over pairs. Pairs without a structural path contribute zero. Specify `pairs=[(0, 1)]` to select one pair by zero-based FC matrix indices.
 
 `solver` can be `auto` (default), `amg`, `cg` or `direct`. With `auto` CG uses an algebraic multigrid (AMG) preconditioner when [PyAMG](https://github.com/pyamg/pyamg) is installed (`pip install pyamg`, or the `amg` extra) and a Jacobi preconditioner otherwise. `amg` requires PyAMG. On a whole-brain HCP graph (about 315,000 WM voxels) AMG reduced the time per pair from about 7.5 s to about 4 s. The default `rtol` is `1e-4`. Each solution is checked for current conservation, and the check is relative to the injected current, so it does not depend on the scale of the conductances. Each FC pair needs one linear solve, so run time grows linearly with the number of pairs.
+
+#### Spectral decomposition
+
+`voxel_modes()` computes eigenmodes of the white-matter graph from WM edges only, on its
+largest connected component, so one basis serves all FC pairs and is not affected by the
+supernodes. `spectral_fsc_voxel()` solves each pair exactly as `solve_fsc_voxel()` does
+and projects the white-matter part of its potentials onto these modes.
+
+```python
+modes = fsc.voxel_modes(graph, parcellation, n_modes=100)        # requires PyAMG
+spec = fsc.spectral_fsc_voxel(graph, parcellation, fc, modes, pairs=pairs)
+spec.energy          # (n_pairs, n_modes) modal energy per FC pair
+spec.captured        # share of each pair's white-matter energy held by the computed modes
+spec.contact_share   # share of each pair's energy dissipated in supernode contacts
+spec.resistance      # effective resistance between the two supernodes
+```
+
+A whole-brain voxel graph has hundreds of thousands of modes, so only the lowest are
+computed, with LOBPCG and an algebraic multigrid preconditioner. For an HCP subject
+(about 315,000 WM voxels) 100 modes took about 7 minutes, computed once per subject.
+`modes.residuals` gives the relative accuracy of every mode, and a warning is issued if
+any has not converged.
+
+`captured` shows how much of a pair's solution the computed modes represent, and it
+depends strongly on the pair. In one HCP subject the lowest 100 modes held about 60–65%
+of the white-matter energy of interhemispheric homotopic pairs, but under 10% for
+neighbouring parcels, whose currents are dominated by local spreading near their
+contacts. A third of the neighbouring pair's energy was dissipated in the contacts
+themselves, against under 10% for the long-range pairs.
+
 
 #### Running pairs in parallel
 
@@ -225,7 +285,7 @@ Run the small deterministic tests without downloading neuroimaging datasets:
 python -m pytest -q
 ```
 
-The tests cover the five-node analytical solution, general MNA, the joint parcellation method and its rejection of FC with cycles, mapping support to streamlines, negative FC, empty FC, ROI-basis accumulation, disconnected ROIs, ROI contacts for oblique tracts, equal conduction along axis and diagonal tracts, WM-only voxel support, and the scale-invariance of the solver's convergence check. Optional tests run when NiBabel and DIPY are installed: a synthetic-FOD end-to-end example, and a check that the default SH basis reproduces amplitudes computed by MRtrix3 (`sh2amp`) from a reference FiberCup FOD stored in `tests/data/`.
+The tests cover the five-node analytical solution, general MNA, the joint parcellation method and its rejection of FC with cycles, mapping support to streamlines, negative FC, empty FC, ROI-basis accumulation, disconnected ROIs, ROI contacts for oblique tracts, equal conduction along axis and diagonal tracts, WM-only voxel support, the scale-invariance of the solver's convergence check, spectral decomposition (exact reconstruction, energy balance, truncated bases), voxel spectral decomposition (energy balance, isolation from unrelated supernodes, LOBPCG modes). Optional tests run when NiBabel and DIPY are installed: a synthetic-FOD end-to-end example, and a check that the default SH basis reproduces amplitudes computed by MRtrix3 (`sh2amp`) from a reference FiberCup FOD stored in `tests/data/`.
 
 ## Research
 
